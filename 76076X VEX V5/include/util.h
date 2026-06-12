@@ -1,5 +1,1 @@
-/*
-
-vv other helper functions vv
-
-*/
+#pragma once
