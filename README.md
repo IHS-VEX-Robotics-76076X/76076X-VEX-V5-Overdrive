@@ -1,6 +1,5 @@
 # 76076X-VEX-V5-Overdrive
-https://marketplace.visualstudio.com/items?itemName=sigbots.pros
-
+### PLEASE WORK ON THE LIBRARY
 to do list:
   - make the library
   - someone figure out pros for me please
