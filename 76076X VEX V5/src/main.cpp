@@ -1,5 +1,6 @@
 #include "main.h"
 #include "chassis.hpp"
+#include "util.hpp"
 
 void red_close_side();
 void blue_far_side();
@@ -38,6 +39,7 @@ void initialize() {
 	pros::lcd::set_text(1, "jedidiah is such an awesome programmer i think he deserves a pay");
 
 	pros::lcd::register_btn1_cb(on_center_button);
+	fun();
 }
 
 /**
