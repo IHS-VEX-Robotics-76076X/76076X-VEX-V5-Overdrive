@@ -1,0 +1,7 @@
+// Stub for cstdint - minimal embedded systems version
+#ifndef _STUB_CSTDINT_
+#define _STUB_CSTDINT_
+
+#include <stdint.h>
+
+#endif

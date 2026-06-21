@@ -1,0 +1,7 @@
+// Stub for cstdlib - minimal embedded systems version
+#ifndef _STUB_CSTDLIB_
+#define _STUB_CSTDLIB_
+
+#include <stdlib.h>
+
+#endif

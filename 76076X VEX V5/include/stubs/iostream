@@ -1,0 +1,27 @@
+// Stub for iostream - minimal embedded systems version
+#ifndef _STUB_IOSTREAM_
+#define _STUB_IOSTREAM_
+
+// Minimal iostream stub for embedded systems
+// For VEX robotics, full iostream functionality is not typically used
+
+#ifdef __cplusplus
+namespace std {
+    // Minimal stream classes - just enough to avoid compile errors
+    class basic_ios {};
+    class ios : public basic_ios {};
+    class basic_ostream : public basic_ios {};
+    class ostream : public basic_ostream {};
+    
+    extern ostream cout;
+    extern ostream cerr;
+    extern ostream clog;
+}
+
+// Make std::endl available if needed
+namespace std {
+    inline ostream& endl(ostream& os) { return os; }
+}
+#endif
+
+#endif

@@ -1,0 +1,7 @@
+// Stub for cstddef - minimal embedded systems version
+#ifndef _STUB_CSTDDEF_
+#define _STUB_CSTDDEF_
+
+#include <stddef.h>
+
+#endif

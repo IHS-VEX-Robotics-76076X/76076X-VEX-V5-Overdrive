@@ -1,0 +1,16 @@
+// Stub for cerrno - minimal embedded systems version
+#ifndef _STUB_CERRNO_
+#define _STUB_CERRNO_
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+#define EDOM 1
+#define ERANGE 2
+
+#ifdef __cplusplus
+}
+#endif
+
+#endif

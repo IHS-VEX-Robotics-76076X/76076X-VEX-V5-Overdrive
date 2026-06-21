@@ -1,0 +1,7 @@
+// Stub for cstdio - minimal embedded systems version
+#ifndef _STUB_CSTDIO_
+#define _STUB_CSTDIO_
+
+#include <stdio.h>
+
+#endif

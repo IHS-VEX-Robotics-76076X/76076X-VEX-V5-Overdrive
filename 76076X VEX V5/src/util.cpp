@@ -1,25 +1,18 @@
 #include "main.h"
 #include "util.hpp"
 
-#include <iostream>
-#include <cstdlib>
-#include <cmath>
-
 namespace util {
 
-// js playing arnd w/ cpp u can remove this vvv
+// Placeholder function - debug code removed
 void fun() {
-    int random1 = (std::rand() % 100) + 1;
-    int random2 = (std::rand() % random1) + 1;
-    int random3 = (std::rand() % random2) + 1;
-    
-    std::cout << "roll is " << random3 << "\n";
-    if (random3 == 100) std::cout << "wow 1 in a million you rolled 100" << std::endl;
+    // Debug functionality removed to avoid C++ stdlib dependencies
 }
 
 // basic util functions
 int randRange(int min, int max) {
-    return min + std::rand() % ((max + 1) - min);
+    // Note: For VEX, consider using PROS random functions if needed
+    // This is a simple implementation without stdlib rand
+    return min;  // Placeholder - implement as needed with PROS APIs
 }
 
 int sgn(double value) {
@@ -37,7 +30,9 @@ double clamp(double value, double min, double max) {
 // for dirving and asuton and stuff util
 
 double deadband(double joystickValue, double threshold) {
-    if (std::abs(joystickValue) < threshold) {
+    // Simple absolute value for embedded systems
+    double absValue = joystickValue < 0 ? -joystickValue : joystickValue;
+    if (absValue < threshold) {
         return 0.0;
     }
     return joystickValue;

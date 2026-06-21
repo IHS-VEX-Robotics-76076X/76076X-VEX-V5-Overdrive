@@ -13,8 +13,12 @@ SRCDIR=$(ROOT)/src
 INCDIR=$(ROOT)/include
 
 WARNFLAGS+=
-EXTRA_CFLAGS=
-EXTRA_CXXFLAGS=
+EXTRA_CFLAGS=-isystem./include/stubs
+EXTRA_CXXFLAGS=-isystem./include/stubs
+EXTRA_LDFLAGS=
+
+# Add stubs directory for missing C++ standard library headers
+EXTRA_INCDIR:=$(INCDIR)/stubs
 
 # Set to 1 to enable hot/cold linking
 USE_PACKAGE:=1

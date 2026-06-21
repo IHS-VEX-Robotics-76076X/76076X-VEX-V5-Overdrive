@@ -1,0 +1,13 @@
+// Stub for cmath - minimal embedded systems version
+#ifndef _STUB_CMATH_
+#define _STUB_CMATH_
+
+#ifdef __cplusplus
+namespace std {
+    inline double abs(double x) { return x < 0 ? -x : x; }
+    inline float abs(float x) { return x < 0 ? -x : x; }
+    inline long abs(long x) { return x < 0 ? -x : x; }
+}
+#endif
+
+#endif
