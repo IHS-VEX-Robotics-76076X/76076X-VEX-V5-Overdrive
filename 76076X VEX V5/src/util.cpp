@@ -5,6 +5,8 @@
 #include <cstdlib>
 #include <cmath>
 
+namespace util {
+
 // js playing arnd w/ cpp u can remove this vvv
 void fun() {
     int random1 = (std::rand() % 100) + 1;
@@ -41,3 +43,4 @@ double deadband(double joystickValue, double threshold) {
     return joystickValue;
 }
 
+} // namespace util
