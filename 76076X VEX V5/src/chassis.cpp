@@ -8,11 +8,6 @@
 // configuration/constants
 #include "config.hpp"
 
-Chassis::Chassis(pros::MotorGroup left, pros::MotorGroup right, pros::Imu *imu,
-                                 PID drivePID, PID turnPID)
-        : leftMotors(left), rightMotors(right), imu(imu),
-            drivePID(drivePID), turnPID(turnPID) {}
-
 Chassis::Chassis(const std::initializer_list<std::int8_t>& leftPorts,
                                  const std::initializer_list<std::int8_t>& rightPorts,
                                  pros::Imu *imu,
@@ -88,6 +83,11 @@ void Chassis::turn_degrees(double degrees) {
         double clamped = util::clamp(output, -127.0, 127.0);
         leftMotors.move(static_cast<int>(-clamped));  // opposite sides spin opposite ways to turn
         rightMotors.move(static_cast<int>(clamped));
+
+#ifdef HOST_BUILD
+        // Simulate IMU rotation change during a turn in host tests
+        imu->set_rotation(imu->get_rotation() + clamped * 0.05);
+#endif
 
         if (turnPID.isSettled(error)) break;
 

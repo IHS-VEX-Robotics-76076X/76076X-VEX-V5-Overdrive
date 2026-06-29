@@ -12,9 +12,6 @@ class Chassis {
         PID turnPID;
 
     public:
-        Chassis(pros::MotorGroup left, pros::MotorGroup right, pros::Imu *imu,
-            PID drivePID, PID turnPID);
-
         // Construct directly from two Motor objects
         Chassis(pros::Motor &left, pros::Motor &right);
 

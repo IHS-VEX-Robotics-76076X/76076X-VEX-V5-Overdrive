@@ -20,8 +20,8 @@ void opcontrol() {
                          (pros::lcd::read_buttons() & LCD_BTN_CENTER) >> 1,
                          (pros::lcd::read_buttons() & LCD_BTN_RIGHT) >> 0);
 
-        int forward = util::deadband(static_cast<int>(master.get_analog(ANALOG_AXIS_3)));
-        int strafe = util::deadband(static_cast<int>(master.get_analog(ANALOG_AXIS_1)));
+        int forward = util::deadband(static_cast<int>(master.get_analog(ANALOG_LEFT_Y)));
+        int strafe = util::deadband(static_cast<int>(master.get_analog(ANALOG_LEFT_X)));
 
         myRobot.drive(forward + strafe, forward - strafe);
 

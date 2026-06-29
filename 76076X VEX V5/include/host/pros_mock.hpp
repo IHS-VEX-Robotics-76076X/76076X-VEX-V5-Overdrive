@@ -35,8 +35,8 @@ namespace lcd {
 
 // Controller constants
 constexpr int E_CONTROLLER_MASTER = 0;
-constexpr int ANALOG_AXIS_1 = 1;
-constexpr int ANALOG_AXIS_3 = 3;
+constexpr int ANALOG_LEFT_X = 1;
+constexpr int ANALOG_LEFT_Y = 3;
 
 // Digital controller buttons
 constexpr int E_CONTROLLER_DIGITAL_L1 = 6;
