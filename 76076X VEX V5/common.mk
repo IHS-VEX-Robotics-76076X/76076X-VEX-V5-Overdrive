@@ -1,7 +1,11 @@
 ARCHTUPLE=arm-none-eabi-
 DEVICE=VEX EDR V5
 
+ifndef HOST_BUILD
 MFLAGS=-mcpu=cortex-a9 -mfpu=neon-fp16 -mfloat-abi=hard -Os -g -mthumb
+else
+MFLAGS=
+endif
 CPPFLAGS=-D_POSIX_THREADS -D_UNIX98_THREAD_MUTEX_ATTRIBUTES -D_POSIX_TIMERS -D_POSIX_MONOTONIC_CLOCK
 GCCFLAGS=-ffunction-sections -fdata-sections -fdiagnostics-color -funwind-tables
 
@@ -54,6 +58,18 @@ OBJCOPY:=$(ARCHTUPLE)objcopy
 SIZETOOL:=$(ARCHTUPLE)size
 READELF:=$(ARCHTUPLE)readelf
 STRIP:=$(ARCHTUPLE)strip
+
+ifdef HOST_BUILD
+CC := gcc
+CXX := g++
+AS := gcc
+LD := g++
+AR := ar
+OBJCOPY := objcopy
+SIZETOOL := size
+READELF := readelf
+STRIP := strip
+endif
 
 ifneq (, $(shell command -v gnumfmt 2> /dev/null))
 	SIZES_NUMFMT:=| gnumfmt --field=-4 --header $(NUMFMTFLAGS)

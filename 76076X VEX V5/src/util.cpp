@@ -1,18 +1,20 @@
 #include "main.h"
 #include "util.hpp"
+#include <cstdlib>
 
 namespace util {
 
 // Placeholder function - debug code removed
 void fun() {
-    // Debug functionality removed to avoid C++ stdlib dependencies
+    // Seed the C RNG with the current millisecond tick so randRange() is usable.
+    std::srand(static_cast<unsigned int>(pros::millis()));
 }
 
 // basic util functions
 int randRange(int min, int max) {
-    // Note: For VEX, consider using PROS random functions if needed
-    // This is a simple implementation without stdlib rand
-    return min;  // Placeholder - implement as needed with PROS APIs
+    if (max <= min) return min;
+    int range = max - min + 1;
+    return min + (std::rand() % range);
 }
 
 int sgn(double value) {
@@ -29,12 +31,9 @@ double clamp(double value, double min, double max) {
 
 // for dirving and asuton and stuff util
 
-double deadband(double joystickValue, double threshold) {
-    // Simple absolute value for embedded systems
-    double absValue = joystickValue < 0 ? -joystickValue : joystickValue;
-    if (absValue < threshold) {
-        return 0.0;
-    }
+int deadband(int joystickValue, int threshold) {
+    int absValue = joystickValue < 0 ? -joystickValue : joystickValue;
+    if (absValue < threshold) return 0;
     return joystickValue;
 }
 

@@ -1,14 +1,25 @@
 #include "main.h"
 #include "chassis.hpp"
+#include "config.hpp"
 #include "util.hpp"
 
 void red_close_side();
 void blue_far_side();
 
-pros::Motor left_motor(1);
-pros::Motor right_motor(2);
+pros::Motor cascade_motor(CASCADE_MOTOR_PORT);
+pros::Motor intake_motor(INTAKE_MOTOR_PORT);
+pros::Motor arm_turn_motor(ARM_TURN_MOTOR_PORT);
+pros::Motor clamp_motor(CLAMP_MOTOR_PORT);
+pros::Imu inertial_sensor(INERTIAL_SENSOR_PORT);
 
-Chassis myRobot(left_motor, right_motor); // chassis
+// Drive train: 3 motors per side.
+Chassis myRobot(
+    {-1, -2, -3},
+    {4, 5, 6},
+    &inertial_sensor,
+    PID(DEFAULT_DRIVE_KP, DEFAULT_DRIVE_KI, DEFAULT_DRIVE_KD),
+    PID(DEFAULT_TURN_KP, DEFAULT_TURN_KI, DEFAULT_TURN_KD)
+); // chassis
 
 /**
  * A callback function for LLEMU's center button.
@@ -39,7 +50,7 @@ void initialize() {
 	pros::lcd::set_text(1, "jedidiah is such an awesome programmer i think he deserves a pay");
 
 	pros::lcd::register_btn1_cb(on_center_button);
-	fun();
+	util::fun();
 }
 
 /**
@@ -88,22 +99,4 @@ void autonomous() {
  * operator control task will be stopped. Re-enabling the robot will restart the
  * task, not resume it from where it left off.
  */
-void opcontrol() {
-	pros::Controller master(pros::E_CONTROLLER_MASTER);
-    
-    // removed the motor groups that were here defaultly because i def them at hte top^^^
-
-    while (true) {
-        pros::lcd::print(0, "%d %d %d", (pros::lcd::read_buttons() & LCD_BTN_LEFT) >> 2,
-                        (pros::lcd::read_buttons() & LCD_BTN_CENTER) >> 1,
-						(pros::lcd::read_buttons() & LCD_BTN_RIGHT) >> 0);
-
-        int dir = master.get_analog(ANALOG_LEFT_Y);    
-        int turn = master.get_analog(ANALOG_RIGHT_X);  // :P
-        
-        left_motor.move(dir - turn);     // :3
-        right_motor.move(dir + turn);   
-        
-        pros::delay(20);                               
-    }
-}
+// `opcontrol` is implemented in src/opcontrol.cpp. Keep single definition there.

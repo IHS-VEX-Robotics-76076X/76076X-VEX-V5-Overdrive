@@ -13,8 +13,13 @@ SRCDIR=$(ROOT)/src
 INCDIR=$(ROOT)/include
 
 WARNFLAGS+=
+ifndef HOST_BUILD
 EXTRA_CFLAGS=-isystem./include/stubs
 EXTRA_CXXFLAGS=-isystem./include/stubs
+else
+EXTRA_CFLAGS=
+EXTRA_CXXFLAGS=
+endif
 EXTRA_LDFLAGS=
 
 # Add stubs directory for missing C++ standard library headers
@@ -26,6 +31,12 @@ USE_PACKAGE:=1
 # Add libraries you do not wish to include in the cold image here
 # EXCLUDE_COLD_LIBRARIES:= $(FWDIR)/your_library.a
 EXCLUDE_COLD_LIBRARIES:= 
+
+# If building for host (make HOST_BUILD=1), add preprocessor define
+ifdef HOST_BUILD
+EXTRA_CFLAGS+=-DHOST_BUILD
+EXTRA_CXXFLAGS+=-DHOST_BUILD
+endif
 
 # Set this to 1 to add additional rules to compile your project as a PROS library template
 IS_LIBRARY:=0

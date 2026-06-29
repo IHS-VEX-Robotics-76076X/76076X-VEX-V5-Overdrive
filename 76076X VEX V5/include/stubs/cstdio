@@ -2,6 +2,19 @@
 #ifndef _STUB_CSTDIO_
 #define _STUB_CSTDIO_
 
-#include <stdio.h>
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+/* Minimal FILE typedef to satisfy declarations */
+typedef struct _IO_FILE FILE;
+
+int printf(const char *format, ...);
+int sprintf(char *str, const char *format, ...);
+void perror(const char *s);
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif

@@ -19,6 +19,9 @@
 #ifndef _PROS_API_H_
 #define _PROS_API_H_
 
+#ifdef HOST_BUILD
+#  include "host/pros_mock.hpp"
+#else
 #ifdef __cplusplus
 #include <cerrno>
 #include <cmath>
@@ -37,7 +40,9 @@
 #include <stdlib.h>
 #include <unistd.h>
 #endif /* __cplusplus */
+#endif
 
+#ifndef HOST_BUILD
 #include "pros/adi.h"
 #include "pros/ai_vision.h"
 #include "pros/colors.h"
@@ -75,6 +80,7 @@
 #include "pros/rtos.hpp"
 #include "pros/screen.hpp"
 #include "pros/vision.hpp"
+#endif
 #endif
 
 #endif  // _PROS_API_H_

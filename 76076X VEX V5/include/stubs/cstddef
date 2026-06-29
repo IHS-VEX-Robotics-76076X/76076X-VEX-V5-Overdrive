@@ -2,6 +2,9 @@
 #ifndef _STUB_CSTDDEF_
 #define _STUB_CSTDDEF_
 
-#include <stddef.h>
+typedef unsigned long size_t;
+#ifndef NULL
+#define NULL ((void*)0)
+#endif
 
 #endif

@@ -12,5 +12,5 @@ namespace util{
 
     double clamp(double value, double min, double max);
 
-    double deadband(double joystickValue, double threshold = 5.0); // change the threshold here
+    int deadband(int joystickValue, int threshold = 5); // change the threshold here
 }
