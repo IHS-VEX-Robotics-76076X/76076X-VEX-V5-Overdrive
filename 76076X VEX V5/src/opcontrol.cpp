@@ -1,5 +1,6 @@
 /**
- * op control here please
+ * Driver control: drivetrain (arcade or tank, see DEFAULT_DRIVE_MODE in
+ * config.hpp) plus the cascade/arm/clamp/intake mechanisms.
  */
 
 #include "main.h"

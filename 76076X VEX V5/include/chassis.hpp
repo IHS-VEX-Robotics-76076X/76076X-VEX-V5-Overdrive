@@ -15,7 +15,7 @@ class Chassis {
         pros::MotorGroup rightMotors;
         pros::Imu *imu; // optional IMU pointer (may be nullptr)
 
-        PID drivePID; // tune these in config.hpp whenever u guys get to that
+        PID drivePID; // gains tuned via config.hpp, see DEFAULT_DRIVE_KP/KI/KD
         PID turnPID;
         double headingKP; // corrects drift during drive_distance using the IMU (0 = no correction)
 
@@ -35,9 +35,6 @@ class Chassis {
         void odomLoop();
 
     public:
-        // Construct directly from two Motor objects
-        Chassis(pros::Motor &left, pros::Motor &right);
-
         // Convenience constructors: construct from port lists.
         // Takes a vector (not initializer_list) so callers can hand it
         // config.hpp's std::array ports directly, whatever size they are.
@@ -64,7 +61,7 @@ class Chassis {
         // ones, so this can't be left to caller discipline.
         ~Chassis();
 
-        void drive_forward(int speed, bool forward); // for forward false = backward prolly u guys can change later if u want btw
+        void drive_forward(int speed, bool forward); // forward=false drives backward at the same speed
         void drive(int leftSpeed, int rightSpeed);
         void stop();
 

@@ -28,13 +28,6 @@ Chassis::Chassis(const std::vector<std::int8_t>& leftPorts,
     rightMotors.set_brake_mode_all(E_MOTOR_BRAKE_HOLD);
 }
 
-Chassis::Chassis(pros::Motor &left, pros::Motor &right)
-        : leftMotors(left), rightMotors(right), imu(nullptr),
-            drivePID(0.0, 0.0, 0.0), turnPID(0.0, 0.0, 0.0), headingKP(0.0) {
-    leftMotors.set_brake_mode_all(E_MOTOR_BRAKE_HOLD);
-    rightMotors.set_brake_mode_all(E_MOTOR_BRAKE_HOLD);
-}
-
 Chassis::~Chassis() {
     stop_odometry();
 }
@@ -140,11 +133,6 @@ void Chassis::turn_degrees(double degrees) {
         leftMotors.move(static_cast<int>(-clamped));  // opposite sides spin opposite ways to turn
         rightMotors.move(static_cast<int>(clamped));
 
-#ifdef HOST_BUILD
-        // Simulate IMU rotation change during a turn in host tests
-        imu->set_rotation(imu->get_rotation() + clamped * 0.05);
-#endif
-
         if (turnPID.isSettled(error)) break;
         if (pros::millis() - startTime >= TURN_TIMEOUT_MS) break; // stalled/never converging - don't hang forever
 
@@ -176,12 +164,6 @@ void Chassis::swing_turn(double degrees, DriveSide pivotSide) {
             leftMotors.move(static_cast<int>(-clamped));
             rightMotors.move(0);
         }
-
-#ifdef HOST_BUILD
-        // Simulate IMU rotation change during a swing turn in host tests
-        // (roughly half the rate of a point turn, since only one side moves)
-        imu->set_rotation(imu->get_rotation() + clamped * 0.025);
-#endif
 
         if (turnPID.isSettled(error)) break;
         if (pros::millis() - startTime >= TURN_TIMEOUT_MS) break; // stalled/never converging - don't hang forever

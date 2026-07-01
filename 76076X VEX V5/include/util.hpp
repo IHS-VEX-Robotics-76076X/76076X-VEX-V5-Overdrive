@@ -1,8 +1,6 @@
 #pragma once
 
-/** 
- * can you guys like add includes and stuff and also create teh definitions in like another file 
- */
+// Small general-purpose helpers shared across the codebase. Definitions in util.cpp.
 namespace util{
     void fun();
 
@@ -12,5 +10,5 @@ namespace util{
 
     double clamp(double value, double min, double max);
 
-    int deadband(int joystickValue, int threshold = 5); // change the threshold here
+    int deadband(int joystickValue, int threshold = 5); // joystick values within +/-threshold of 0 are treated as 0
 }

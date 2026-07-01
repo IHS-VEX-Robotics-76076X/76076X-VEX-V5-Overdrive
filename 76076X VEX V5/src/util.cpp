@@ -4,13 +4,11 @@
 
 namespace util {
 
-// Placeholder function - debug code removed
+// Seed the C RNG with the current millisecond tick so randRange() is usable.
 void fun() {
-    // Seed the C RNG with the current millisecond tick so randRange() is usable.
     std::srand(static_cast<unsigned int>(pros::millis()));
 }
 
-// basic util functions
 int randRange(int min, int max) {
     if (max <= min) return min;
     int range = max - min + 1;
@@ -28,8 +26,6 @@ double clamp(double value, double min, double max) {
     if (value > max) return max;
     return value;
 }
-
-// for dirving and asuton and stuff util
 
 int deadband(int joystickValue, int threshold) {
     int absValue = joystickValue < 0 ? -joystickValue : joystickValue;
