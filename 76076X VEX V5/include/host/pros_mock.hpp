@@ -90,6 +90,12 @@ class MotorGroup {
                 if (!has_motor(static_cast<int>(p))) create_motor(static_cast<int>(p));
             }
         }
+        MotorGroup(const std::vector<std::int8_t>& ports) {
+            for (auto p : ports) {
+                ports_.push_back(static_cast<int>(p));
+                if (!has_motor(static_cast<int>(p))) create_motor(static_cast<int>(p));
+            }
+        }
         MotorGroup(Motor &m) { ports_.push_back(0); if (!has_motor(0)) create_motor(0); }
         void move(int v) const {
             for (int p : ports_) {

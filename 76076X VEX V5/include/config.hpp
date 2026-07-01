@@ -28,3 +28,24 @@ constexpr double DEFAULT_DRIVE_KD = 0.0;
 constexpr double DEFAULT_TURN_KP = 1.0;
 constexpr double DEFAULT_TURN_KI = 0.0;
 constexpr double DEFAULT_TURN_KD = 0.0;
+
+// PID windup guard and settling tolerances. Drive error is in encoder ticks
+// (can be thousands) and turn error is in degrees (0-180), so they need very
+// different scales - do not share one set of values between the two PIDs.
+constexpr double DEFAULT_DRIVE_INTEGRAL_CAP = 5000.0;
+constexpr double DEFAULT_DRIVE_SETTLE_ERROR = 30.0;    // ticks
+constexpr double DEFAULT_DRIVE_SETTLE_VELOCITY = 5.0;  // ticks/loop
+
+constexpr double DEFAULT_TURN_INTEGRAL_CAP = 20.0;
+constexpr double DEFAULT_TURN_SETTLE_ERROR = 2.0;      // degrees
+constexpr double DEFAULT_TURN_SETTLE_VELOCITY = 0.5;   // degrees/loop
+
+// Safety timeouts: if a movement's PID loop never settles (stall, jam,
+// disconnected motor, bad gains), it bails out after this many ms instead of
+// hanging the autonomous/opcontrol task forever.
+constexpr int DRIVE_TIMEOUT_MS = 3000;
+constexpr int TURN_TIMEOUT_MS = 2000;
+
+// Proportional gain correcting heading drift during drive_distance() using
+// the IMU. 0 disables correction (e.g. when no IMU is connected).
+constexpr double DEFAULT_HEADING_KP = 1.0;
