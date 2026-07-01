@@ -36,20 +36,19 @@ Chassis myRobot(
     DEFAULT_HEADING_KP
 ); // chassis
 
+// Toggled by the LCD center button; opcontrol.cpp reads this to decide
+// whether to show live battery/controller/fault status on LCD line 2.
+bool show_status = false;
+
 /**
  * A callback function for LLEMU's center button.
  *
- * When this callback is fired, it will toggle line 2 of the LCD text between
- * "I was pressed!" and nothing.
+ * Toggles the live battery/controller-connection/motor-fault status readout
+ * on LCD line 2 (see update_status_display() in opcontrol.cpp).
  */
 void on_center_button() {
-	static bool pressed = false;
-	pressed = !pressed;
-	if (pressed) {
-		pros::lcd::set_text(2, "I was pressed!");
-	} else {
-		pros::lcd::clear_line(2);
-	}
+	show_status = !show_status;
+	if (!show_status) pros::lcd::clear_line(2);
 }
 
 /**
@@ -57,7 +56,7 @@ void on_center_button() {
  *
  * All other competition modes are blocked by initialize; it is recommended
  * to keep execution time for this mode under a few seconds.
- * 
+ *
  * prauton goes here i think but we prolly wont need it
  */
 void initialize() {
@@ -65,6 +64,15 @@ void initialize() {
 	pros::lcd::set_text(1, "jedidiah is such an awesome programmer i think he deserves a pay");
 
 	pros::lcd::register_btn1_cb(on_center_button);
+
+	// Lift/arm/clamp mechanisms hold position against gravity when stopped;
+	// the intake just needs a clean stop, not a held position.
+	cascade_motor.set_brake_mode(E_MOTOR_BRAKE_HOLD);
+	arm_turn_motor.set_brake_mode(E_MOTOR_BRAKE_HOLD);
+	clamp_motor.set_brake_mode(E_MOTOR_BRAKE_HOLD);
+	intake_motor.set_brake_mode(E_MOTOR_BRAKE_BRAKE);
+
+	myRobot.start_odometry();
 	util::fun();
 }
 

@@ -3,6 +3,13 @@
 #include <array>
 #include <cstdint>
 
+// Driver control style. ARCADE: one stick (left Y = forward, left X = turn).
+// TANK: two sticks (left Y = left side, right Y = right side). This is a tank
+// drivetrain (3 motors/side, no mecanum) - "arcade" here still means single-
+// stick turning, not strafing.
+enum class DriveMode { ARCADE, TANK };
+constexpr DriveMode DEFAULT_DRIVE_MODE = DriveMode::ARCADE;
+
 // Robot configuration constants (tune for your robot)
 constexpr double WHEEL_DIAMETER_INCH = 3.25; // inches
 constexpr double GEAR_RATIO = 1.0;
@@ -49,3 +56,8 @@ constexpr int TURN_TIMEOUT_MS = 2000;
 // Proportional gain correcting heading drift during drive_distance() using
 // the IMU. 0 disables correction (e.g. when no IMU is connected).
 constexpr double DEFAULT_HEADING_KP = 1.0;
+
+// Basic motion profiling: caps how much drive_distance()'s output can change
+// per 10ms loop (out of the -127..127 motor range), so the drivetrain ramps
+// up from a dead stop instead of slamming to full power and slipping.
+constexpr double DRIVE_MAX_ACCEL_PER_LOOP = 15.0;

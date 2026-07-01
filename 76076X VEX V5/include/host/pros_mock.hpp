@@ -9,6 +9,9 @@
 #include <string>
 #include <iostream>
 #include <map>
+#include <cstdint>
+#include <utility>
+#include <mutex>
 
 namespace pros {
 
@@ -33,10 +36,18 @@ namespace lcd {
     inline int read_buttons() { return 0; }
 }
 
+// Battery mock (host build has no real battery; report a healthy charge)
+namespace battery {
+    inline double get_capacity() { return 100.0; }
+    inline double get_voltage() { return 12000.0; }
+}
+
 // Controller constants
 constexpr int E_CONTROLLER_MASTER = 0;
 constexpr int ANALOG_LEFT_X = 1;
 constexpr int ANALOG_LEFT_Y = 3;
+constexpr int ANALOG_RIGHT_X = 2;
+constexpr int ANALOG_RIGHT_Y = 4;
 
 // Digital controller buttons
 constexpr int E_CONTROLLER_DIGITAL_L1 = 6;
@@ -51,9 +62,23 @@ constexpr int LCD_BTN_LEFT = 1 << 2;
 constexpr int LCD_BTN_CENTER = 1 << 1;
 constexpr int LCD_BTN_RIGHT = 1 << 0;
 
-// Host simulation helpers will be defined after Motor/Controller classes
-static std::map<int, int> __host_controller_analogs; // controller analog values
-static std::map<int, bool> __host_controller_digital; // controller button values
+// Motor brake modes
+constexpr int E_MOTOR_BRAKE_COAST = 0;
+constexpr int E_MOTOR_BRAKE_BRAKE = 1;
+constexpr int E_MOTOR_BRAKE_HOLD = 2;
+
+// Host simulation helpers will be defined after Motor/Controller classes.
+// These must be `inline` (external linkage, merged by the linker into one
+// shared instance), not `static` (internal linkage) - the `inline` functions
+// below that touch them get merged across translation units, and if the
+// state they touch isn't equally shared, different TUs' calls can resolve to
+// a mismatched instance of the map. That's a real ODR violation, not just a
+// style nit: it only shows up once enough .cpp files that include this header
+// get linked into one binary (host tests currently link too few to trigger
+// it, but a fuller host build - e.g. main.cpp + opcontrol.cpp + chassis.cpp -
+// hits it and crashes on startup).
+inline std::map<int, int> __host_controller_analogs; // controller analog values
+inline std::map<int, bool> __host_controller_digital; // controller button values
 // Prototypes needed by classes
 inline bool has_motor(int port);
 inline void create_motor(int port);
@@ -76,6 +101,8 @@ class Motor {
         void tare_position() { position = 0; }
         void set_position(double p) { position = p; }
         int get_voltage() const { return voltage; }
+        void set_brake_mode(int mode) { /* no motor dynamics to brake in the host mock */ }
+        std::uint32_t get_faults() const { return 0; }
     private:
         int port;
         double position;
@@ -112,6 +139,10 @@ class MotorGroup {
             for (int p : ports_) out.push_back(host_get_motor_position(p));
             return out;
         }
+        void set_brake_mode_all(int mode) const { /* no motor dynamics to brake in the host mock */ }
+        std::vector<std::uint32_t> get_faults_all() const {
+            return std::vector<std::uint32_t>(ports_.size(), 0);
+        }
     private:
         std::vector<int> ports_;
 };
@@ -133,16 +164,71 @@ class Controller {
         void set_analog(int channel, int value) { host_set_controller_analog(channel, value); }
         bool get_digital(int button) const { auto it = __host_controller_digital.find(button); return it != __host_controller_digital.end() && it->second; }
         void set_digital(int button, bool pressed) { __host_controller_digital[button] = pressed; }
+        std::int32_t is_connected() { return 1; }
+        std::int32_t get_battery_capacity() { return 100; }
+};
+
+// Minimal RTOS mocks - just enough for Chassis's background odometry task.
+class Mutex {
+    public:
+        Mutex() = default;
+        bool take() { mtx_.lock(); return true; }
+        bool give() { mtx_.unlock(); return true; }
+    private:
+        std::mutex mtx_;
+};
+
+class Task {
+    public:
+        template <class F>
+        explicit Task(F&& function) : thread_(std::forward<F>(function)) {}
+        // Real pros::Task has no join() (VEX tasks just run for the program's
+        // lifetime), but the host build's "program" can actually exit, so
+        // callers that stop a task (e.g. Chassis::stop_odometry()) must join
+        // it here first - otherwise a detached thread can outlive the objects
+        // it references and segfault during static teardown.
+        void join() { if (thread_.joinable()) thread_.join(); }
+        ~Task() { if (thread_.joinable()) thread_.detach(); }
+        Task(const Task&) = delete;
+        Task& operator=(const Task&) = delete;
+    private:
+        std::thread thread_;
 };
 
 // Implement host simulation helpers inside namespace pros
-static std::map<int, Motor> __host_motors; // map must be declared after Motor is defined
+inline std::map<int, Motor> __host_motors; // map must be declared after Motor is defined; see linkage note above
+
+// Real PROS motor calls are safe to make from multiple tasks concurrently
+// (e.g. a drive task moving motors while an odometry task reads position),
+// so the host mock needs the same guarantee. has_motor()/create_motor() are
+// only called single-threaded (from MotorGroup's constructor, before any
+// task/thread starts) or from within the host_* functions below, which hold
+// this mutex for their whole body - so they stay lock-free themselves to
+// avoid a recursive-lock deadlock.
+inline std::mutex __host_motors_mutex;
 inline bool has_motor(int port) { return __host_motors.find(port) != __host_motors.end(); }
 inline void create_motor(int port) { __host_motors.emplace(port, Motor(port)); }
-inline void host_set_motor_position(int port, double pos) { if (!has_motor(port)) create_motor(port); __host_motors[port].set_position(pos); }
-inline void host_set_motor_voltage(int port, int v) { if (!has_motor(port)) create_motor(port); /* voltage stored via move */ }
-inline void host_increment_motor_position(int port, double delta) { if (!has_motor(port)) create_motor(port); double p = __host_motors[port].get_position(); __host_motors[port].set_position(p + delta); }
-inline double host_get_motor_position(int port) { if (!has_motor(port)) create_motor(port); return __host_motors[port].get_position(); }
+inline void host_set_motor_position(int port, double pos) {
+    std::lock_guard<std::mutex> lock(__host_motors_mutex);
+    if (!has_motor(port)) create_motor(port);
+    __host_motors[port].set_position(pos);
+}
+inline void host_set_motor_voltage(int port, int v) {
+    std::lock_guard<std::mutex> lock(__host_motors_mutex);
+    if (!has_motor(port)) create_motor(port);
+    /* voltage stored via move */
+}
+inline void host_increment_motor_position(int port, double delta) {
+    std::lock_guard<std::mutex> lock(__host_motors_mutex);
+    if (!has_motor(port)) create_motor(port);
+    double p = __host_motors[port].get_position();
+    __host_motors[port].set_position(p + delta);
+}
+inline double host_get_motor_position(int port) {
+    std::lock_guard<std::mutex> lock(__host_motors_mutex);
+    if (!has_motor(port)) create_motor(port);
+    return __host_motors[port].get_position();
+}
 
 inline void host_set_controller_analog(int channel, int value) { __host_controller_analogs[channel] = value; }
 inline int host_get_controller_analog(int channel) { auto it = __host_controller_analogs.find(channel); return it == __host_controller_analogs.end() ? 0 : it->second; }
