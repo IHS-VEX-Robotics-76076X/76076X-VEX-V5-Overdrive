@@ -39,7 +39,7 @@ namespace lcd {
 // Battery mock (host build has no real battery; report a healthy charge)
 namespace battery {
     inline double get_capacity() { return 100.0; }
-    inline double get_voltage() { return 12000.0; }
+    inline std::int32_t get_voltage() { return 12000; } // millivolts, matches real return type
 }
 
 // Controller constants
