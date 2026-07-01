@@ -42,20 +42,23 @@ namespace battery {
     inline std::int32_t get_voltage() { return 12000; } // millivolts, matches real return type
 }
 
-// Controller constants
+// Controller constants. Values match the real pros::controller_analog_e_t /
+// controller_digital_e_t enums (include/pros/misc.h) exactly, not just each
+// other - so host-test behavior stays representative of real hardware
+// numbering instead of being an internally-consistent-but-arbitrary mapping.
 constexpr int E_CONTROLLER_MASTER = 0;
-constexpr int ANALOG_LEFT_X = 1;
-constexpr int ANALOG_LEFT_Y = 3;
+constexpr int ANALOG_LEFT_X = 0;
+constexpr int ANALOG_LEFT_Y = 1;
 constexpr int ANALOG_RIGHT_X = 2;
-constexpr int ANALOG_RIGHT_Y = 4;
+constexpr int ANALOG_RIGHT_Y = 3;
 
 // Digital controller buttons
 constexpr int E_CONTROLLER_DIGITAL_L1 = 6;
 constexpr int E_CONTROLLER_DIGITAL_L2 = 7;
-constexpr int E_CONTROLLER_DIGITAL_R1 = 5;
-constexpr int E_CONTROLLER_DIGITAL_R2 = 8;
-constexpr int E_CONTROLLER_DIGITAL_A = 1;
-constexpr int E_CONTROLLER_DIGITAL_X = 3;
+constexpr int E_CONTROLLER_DIGITAL_R1 = 8;
+constexpr int E_CONTROLLER_DIGITAL_R2 = 9;
+constexpr int E_CONTROLLER_DIGITAL_A = 17;
+constexpr int E_CONTROLLER_DIGITAL_X = 14;
 
 // Button masks
 constexpr int LCD_BTN_LEFT = 1 << 2;
@@ -86,6 +89,7 @@ inline void host_set_motor_position(int port, double pos);
 inline void host_set_motor_voltage(int port, int v);
 inline void host_increment_motor_position(int port, double delta);
 inline double host_get_motor_position(int port);
+inline int host_get_motor_voltage(int port);
 inline void host_set_controller_analog(int channel, int value);
 inline int host_get_controller_analog(int channel);
 inline void host_set_controller_digital(int button, bool pressed);
@@ -101,6 +105,7 @@ class Motor {
         void tare_position() { position = 0; }
         void set_position(double p) { position = p; }
         int get_voltage() const { return voltage; }
+        void set_voltage(int v) { voltage = v; } // updates voltage only, not position (MotorGroup::move() tracks position separately)
         void set_brake_mode(int mode) { /* no motor dynamics to brake in the host mock */ }
         std::uint32_t get_faults() const { return 0; }
     private:
@@ -150,11 +155,16 @@ class MotorGroup {
 class Imu {
     public:
         Imu(int port) : angle(0.0) {}
-        double get_rotation() const { return angle; }
-        void reset() { angle = 0; }
+        double get_rotation() const { return angle.load(); }
+        void reset() { angle = 0.0; }
         void set_rotation(double a) { angle = a; }
     private:
-        double angle;
+        // atomic, not a plain double: real hardware's IMU is safe to read
+        // from multiple concurrent tasks (e.g. a drive task and an odometry
+        // task both reading it), and host tests now do exactly that plus a
+        // host-only task that writes it to simulate rotation - a plain
+        // double would make that a real data race.
+        std::atomic<double> angle;
 };
 
 class Controller {
@@ -216,7 +226,7 @@ inline void host_set_motor_position(int port, double pos) {
 inline void host_set_motor_voltage(int port, int v) {
     std::lock_guard<std::mutex> lock(__host_motors_mutex);
     if (!has_motor(port)) create_motor(port);
-    /* voltage stored via move */
+    __host_motors[port].set_voltage(v);
 }
 inline void host_increment_motor_position(int port, double delta) {
     std::lock_guard<std::mutex> lock(__host_motors_mutex);
@@ -228,6 +238,15 @@ inline double host_get_motor_position(int port) {
     std::lock_guard<std::mutex> lock(__host_motors_mutex);
     if (!has_motor(port)) create_motor(port);
     return __host_motors[port].get_position();
+}
+// Lets host-only test code (not production Chassis logic) observe what a
+// motor was last commanded to do - e.g. to simulate how an IMU would
+// respond to a differential turn, without Chassis itself needing to know
+// it's running in a test.
+inline int host_get_motor_voltage(int port) {
+    std::lock_guard<std::mutex> lock(__host_motors_mutex);
+    if (!has_motor(port)) create_motor(port);
+    return __host_motors[port].get_voltage();
 }
 
 inline void host_set_controller_analog(int channel, int value) { __host_controller_analogs[channel] = value; }

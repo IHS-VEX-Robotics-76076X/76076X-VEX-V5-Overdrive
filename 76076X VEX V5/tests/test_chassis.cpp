@@ -1,6 +1,8 @@
 #include <iostream>
 #include <cassert>
 #include <cmath>
+#include <atomic>
+#include <thread>
 
 #include "chassis.hpp"
 #include "config.hpp"
@@ -12,6 +14,45 @@
 constexpr double DISTANCE_TOLERANCE_TICKS = 10.0;
 constexpr double ANGLE_TOLERANCE_DEG = 10.0;
 constexpr double TIMEOUT_SLACK_MS = 500.0;
+
+// The real IMU obviously doesn't respond to fake motors, so something has to
+// simulate "the robot rotated" for turn_degrees()/swing_turn() to have
+// anything to converge against in host tests. This used to live inside
+// Chassis itself (a #ifdef HOST_BUILD block in turn_degrees()/swing_turn());
+// it lives here instead so production chassis logic has no simulation-only
+// branches at all.
+//
+// Derives the rotation change from the actual left/right motor voltage
+// difference, which naturally reproduces both a point turn (opposite
+// voltages) and a swing turn (one side at 0) at the correct relative rate
+// using a single formula, rather than two separately hand-picked constants.
+class ImuTurnSimulator {
+    public:
+        ImuTurnSimulator(pros::Imu& imu, int leftPort, int rightPort)
+            : imu_(imu), leftPort_(leftPort), rightPort_(rightPort),
+              running_(true), thread_([this] { run(); }) {}
+
+        ~ImuTurnSimulator() {
+            running_ = false;
+            if (thread_.joinable()) thread_.join();
+        }
+
+    private:
+        void run() {
+            while (running_) {
+                int leftVoltage = pros::host_get_motor_voltage(leftPort_);
+                int rightVoltage = pros::host_get_motor_voltage(rightPort_);
+                imu_.set_rotation(imu_.get_rotation() + (rightVoltage - leftVoltage) * 0.025);
+                pros::delay(10);
+            }
+        }
+
+        pros::Imu& imu_;
+        int leftPort_;
+        int rightPort_;
+        std::atomic<bool> running_;
+        std::thread thread_;
+};
 
 static void test_drive_distance_converges() {
     std::cout << "[test] drive_distance converges on target\n";
@@ -42,6 +83,7 @@ static void test_turn_degrees_converges() {
     PID turnPid(1.0, 0.0, 0.0);
     Chassis robot({3}, {4}, &imu, drivePid, turnPid);
 
+    ImuTurnSimulator sim(imu, 3, 4);
     robot.turn_degrees(90.0);
 
     std::cout << "  final IMU rotation=" << imu.get_rotation() << "\n";
@@ -57,6 +99,7 @@ static void test_swing_turn_only_moves_one_side() {
     PID turnPid(1.0, 0.0, 0.0);
     Chassis robot({5}, {6}, &imu, drivePid, turnPid);
 
+    ImuTurnSimulator sim(imu, 5, 6);
     robot.swing_turn(45.0, Chassis::DriveSide::LEFT);
 
     double leftPos = pros::host_get_motor_position(5);
@@ -137,6 +180,7 @@ static void test_drive_to_point_reaches_off_axis_target() {
     PID turnPid(1.0, 0.0, 0.0);
     Chassis robot({11}, {12}, &imu, drivePid, turnPid);
 
+    ImuTurnSimulator sim(imu, 11, 12);
     robot.reset_position(0.0, 0.0, 0.0);
     robot.start_odometry();
     robot.drive_to_point(10.0, 0.0); // due +X: requires turning ~90 deg off the starting heading
