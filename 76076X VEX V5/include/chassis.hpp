@@ -21,7 +21,10 @@ class Chassis {
 
         // Dead-reckoned odometry (inches, degrees), updated by a background
         // task started with start_odometry(). Requires an IMU for heading -
-        // without one, start_odometry() is a no-op.
+        // without one, start_odometry() is a no-op. (x, y) use a compass-style
+        // convention matching imu->get_rotation() directly: heading 0 = +Y
+        // axis, clockwise-positive (same direction turn_degrees(+degrees)
+        // actually turns the robot).
         double odomX = 0.0;
         double odomY = 0.0;
         double odomHeading = 0.0;
@@ -72,8 +75,10 @@ class Chassis {
 
         // Turns to face (targetX, targetY) then drives straight to it, using
         // odometry for feedback. This is sequential point-to-point ("go to
-        // point") following, not curvature-based pure pursuit - verify the
-        // heading-convention math on a real robot before trusting it in a match.
+        // point") following, not curvature-based pure pursuit - the (x, y)
+        // convention is internally consistent with odometry, but which
+        // physical direction on the field is "+X"/"+Y" still depends on
+        // however the IMU happens to be oriented, so verify on a real robot.
         void drive_to_point(double targetX, double targetY);
         void follow_path(const std::vector<std::pair<double, double>>& waypoints);
 };

@@ -70,15 +70,20 @@ forever if the PID never settles (stall, jam, bad gains).
   encoders and the IMU. **Requires an IMU** - `start_odometry()` is a no-op
   without one. Call once, typically from `initialize()`.
 - `get_x()` / `get_y()` / `get_heading()` / `reset_position(x, y, headingDeg)`.
+  Uses a compass-style convention matching `imu->get_rotation()` directly:
+  heading 0 = +Y axis, clockwise-positive (the same direction
+  `turn_degrees(+degrees)` actually turns the robot) - not the standard math
+  convention (0 = +X axis, counter-clockwise-positive).
 - `drive_to_point(x, y)` - turns to face `(x, y)` then drives straight to it,
   using odometry feedback. This is sequential point-to-point ("go to point")
   following, **not** curvature-based pure pursuit.
 - `follow_path({{x1,y1}, {x2,y2}, ...})` - calls `drive_to_point` for each
   waypoint in order.
 
-The heading-convention math in `drive_to_point` (converting a standard math
-angle to the IMU's rotation convention) hasn't been validated against a real
-IMU - verify it on-robot before relying on it in a match.
+`drive_to_point`'s bearing math is internally consistent with odometry (both
+use the same convention above), but which physical direction on the field
+counts as "+X"/"+Y" still depends on how the IMU happens to be mounted/
+oriented - verify on-robot before relying on it in a match.
 
 ## PID
 
