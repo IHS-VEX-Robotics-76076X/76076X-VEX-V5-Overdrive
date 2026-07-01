@@ -35,6 +35,10 @@ Chassis::Chassis(pros::Motor &left, pros::Motor &right)
     rightMotors.set_brake_mode_all(E_MOTOR_BRAKE_HOLD);
 }
 
+Chassis::~Chassis() {
+    stop_odometry();
+}
+
 void Chassis::drive_forward(int speed, bool forward) {
     if (!forward) speed = -speed; // flip or sum
     leftMotors.move(speed);
@@ -61,8 +65,18 @@ void Chassis::drive_distance(double inches) {
     double ticksPerInch = (TICKS_PER_REV * GEAR_RATIO) / (WHEEL_DIAMETER_INCH * M_PI);
     double target = inches * ticksPerInch;
 
-    leftMotors.tare_position_all();
-    rightMotors.tare_position_all();
+    // Measure distance relative to a captured starting position instead of
+    // tare_position_all(): taring resets the physical/shared encoder
+    // counters to 0, which corrupts odomLoop() if it's running concurrently
+    // (it reads these same counters and expects them to be continuous, not
+    // reset out from under it mid-match - every drive_distance() call after
+    // the first would otherwise permanently wipe out accumulated odometry).
+    std::vector<double> startLeftPositions = leftMotors.get_position_all();
+    std::vector<double> startRightPositions = rightMotors.get_position_all();
+    double startLeftAvg = std::accumulate(startLeftPositions.begin(), startLeftPositions.end(), 0.0) / startLeftPositions.size();
+    double startRightAvg = std::accumulate(startRightPositions.begin(), startRightPositions.end(), 0.0) / startRightPositions.size();
+    double startAvg = (startLeftAvg + startRightAvg) / 2.0;
+
     drivePID.reset();
 
     // hold whatever heading we started at, if an IMU is connected
@@ -77,7 +91,7 @@ void Chassis::drive_distance(double inches) {
         std::vector<double> rightPositions = rightMotors.get_position_all();
         double leftAvg = std::accumulate(leftPositions.begin(), leftPositions.end(), 0.0) / leftPositions.size();
         double rightAvg = std::accumulate(rightPositions.begin(), rightPositions.end(), 0.0) / rightPositions.size();
-        double current = (leftAvg + rightAvg) / 2.0;
+        double current = (leftAvg + rightAvg) / 2.0 - startAvg;
 
         double error = target - current;
         double output = drivePID.calculate(error);

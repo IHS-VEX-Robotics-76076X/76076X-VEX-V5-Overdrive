@@ -153,6 +153,68 @@ static void test_drive_to_point_reaches_off_axis_target() {
     assert(std::abs(heading - 90.0) < ANGLE_TOLERANCE_DEG);
 }
 
+// drive_distance() used to call tare_position_all() on every call, which
+// resets the shared physical/simulated encoder counters to 0. odomLoop()
+// (running continuously in the background once start_odometry() is called,
+// as it would be for the whole match) reads those same counters and expects
+// them to be continuous - a tare mid-match would yank them out from under
+// its baseline, producing one huge spurious jump that permanently corrupts
+// the accumulated position. This only shows up across multiple drive_distance
+// calls while odometry is running (the single-call tests above can't catch
+// it), which is exactly the realistic autonomous usage pattern.
+static void test_odometry_survives_multiple_drive_calls() {
+    std::cout << "[test] odometry position isn't corrupted by a second drive_distance call\n";
+
+    pros::Imu imu(0);
+    imu.set_rotation(0.0);
+    PID drivePid(0.5, 0.0, 0.0);
+    PID turnPid(1.0, 0.0, 0.0);
+    Chassis robot({13}, {14}, &imu, drivePid, turnPid);
+
+    robot.reset_position(0.0, 0.0, 0.0);
+    robot.start_odometry();
+
+    robot.drive_distance(10.0);
+    pros::delay(30);
+    double yAfterFirstLeg = robot.get_y();
+    std::cout << "  after leg 1: y=" << yAfterFirstLeg << "\n";
+    assert(std::abs(yAfterFirstLeg - 10.0) < 3.0);
+
+    robot.drive_distance(10.0); // a second leg, same heading - must not reset odometry's baseline
+    pros::delay(30);
+    double yAfterSecondLeg = robot.get_y();
+    std::cout << "  after leg 2: y=" << yAfterSecondLeg << "\n";
+
+    robot.stop_odometry();
+
+    // The second leg must add to the first, not overwrite/erase it.
+    assert(yAfterSecondLeg > yAfterFirstLeg + 5.0);
+    assert(std::abs(yAfterSecondLeg - 20.0) < 5.0);
+}
+
+// Deliberately does NOT call stop_odometry() before robot goes out of scope.
+// Chassis's destructor must stop the background task itself - otherwise (on
+// host builds) the task's underlying thread just gets detached and keeps
+// running past the point where leftMotors/rightMotors/odomMutex are
+// destroyed, touching freed memory. This is the same crash pattern that
+// showed up the first time this feature was built and tested end to end.
+static void test_chassis_destructor_stops_odometry_without_crashing() {
+    std::cout << "[test] Chassis destructor stops a still-running odometry task\n";
+
+    {
+        pros::Imu imu(0);
+        PID drivePid(0.5, 0.0, 0.0);
+        PID turnPid(1.0, 0.0, 0.0);
+        Chassis robot({17}, {18}, &imu, drivePid, turnPid);
+
+        robot.start_odometry();
+        robot.drive_distance(5.0);
+        // no stop_odometry() call - ~Chassis() must handle it
+    }
+
+    std::cout << "  (no crash - destructor stopped the task)\n";
+}
+
 int main() {
     std::cout << "Host test: Chassis\n";
 
@@ -162,6 +224,8 @@ int main() {
     test_drive_and_turn_timeout_when_gains_never_converge();
     test_odometry_tracks_straight_line_drive();
     test_drive_to_point_reaches_off_axis_target();
+    test_odometry_survives_multiple_drive_calls();
+    test_chassis_destructor_stops_odometry_without_crashing();
 
     std::cout << "All chassis tests passed.\n";
     return 0;

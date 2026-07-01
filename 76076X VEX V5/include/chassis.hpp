@@ -54,6 +54,16 @@ class Chassis {
             PID drivePID,
             PID turnPID);
 
+        // Stops the odometry task (if running) before the rest of the object
+        // is torn down. Without this, destroying a Chassis whose odometry
+        // task is still running would leave the background task's Task
+        // destructor to just detach it (on host builds) - a thread that
+        // outlives leftMotors/rightMotors/odomMutex and touches freed memory.
+        // Real device builds never actually destroy the global Chassis
+        // during a match, but host tests routinely construct short-lived
+        // ones, so this can't be left to caller discipline.
+        ~Chassis();
+
         void drive_forward(int speed, bool forward); // for forward false = backward prolly u guys can change later if u want btw
         void drive(int leftSpeed, int rightSpeed);
         void stop();
