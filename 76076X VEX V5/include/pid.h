@@ -6,13 +6,24 @@
 // higher kP = snappier but more oscillation prolly
 // kI fixes leftover error (keep this pretty small usually)
 // kD dampens the overshoot
+//
+// integralCap, settleError and settleVelocity are per-instance because a
+// drive PID (error measured in encoder ticks, can be thousands) and a turn
+// PID (error measured in degrees, 0-180) operate on completely different
+// scales and can't share one set of tuned values.
 
 class PID {
     public:
         double kP, kI, kD;
 
-        PID(double p, double i, double d)
-            : kP(p), kI(i), kD(d) {}
+        PID(double p, double i, double d,
+            double integralCap = 300.0,
+            double settleError = 5.0,
+            double settleVelocity = 1.0)
+            : kP(p), kI(i), kD(d),
+              integralCap(integralCap),
+              settleError(settleError),
+              settleVelocity(settleVelocity) {}
 
         double calculate(double error) {
             integral += error;
@@ -21,7 +32,7 @@ class PID {
             if (integral >  integralCap) integral =  integralCap;
             if (integral < -integralCap) integral = -integralCap;
 
-            double derivative = error - prevError;
+            derivative = error - prevError;
             prevError = error;
 
             return (kP * error) + (kI * integral) + (kD * derivative);
@@ -31,14 +42,23 @@ class PID {
         void reset() {
             integral = 0;
             prevError = 0;
+            derivative = 0;
         }
 
-        bool isSettled(double error, double threshold = 5.0) { // change threshold to whatever feels right
-            return std::abs(error) < threshold;
+        // Settled once both the error and its rate of change (derivative) are
+        // small, so a fast pass through the target isn't mistaken for having
+        // arrived - checking error alone lets a moving robot "settle" right
+        // as it flies past the setpoint.
+        bool isSettled(double error) const {
+            return std::abs(error) < settleError && std::abs(derivative) < settleVelocity;
         }
 
     private:
         double integral   = 0;
         double prevError  = 0;
-        double integralCap = 300; // cap so it doesnt explode, tune this too
+        double derivative = 0;
+
+        double integralCap;   // cap so integral doesnt explode
+        double settleError;   // how close the error must get
+        double settleVelocity; // how close the error's rate of change must get
 };

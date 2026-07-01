@@ -3,27 +3,28 @@
 #include "util.hpp"
 
 #include <cmath>
+#include <cstdint>
 #include <numeric>
 
 // configuration/constants
 #include "config.hpp"
 
-Chassis::Chassis(const std::initializer_list<std::int8_t>& leftPorts,
-                                 const std::initializer_list<std::int8_t>& rightPorts,
+Chassis::Chassis(const std::vector<std::int8_t>& leftPorts,
+                                 const std::vector<std::int8_t>& rightPorts,
                                  pros::Imu *imu,
-                                 PID drivePID, PID turnPID)
+                                 PID drivePID, PID turnPID, double headingKP)
         : leftMotors(leftPorts), rightMotors(rightPorts), imu(imu),
-            drivePID(drivePID), turnPID(turnPID) {}
+            drivePID(drivePID), turnPID(turnPID), headingKP(headingKP) {}
 
-Chassis::Chassis(const std::initializer_list<std::int8_t>& leftPorts,
-                                 const std::initializer_list<std::int8_t>& rightPorts,
+Chassis::Chassis(const std::vector<std::int8_t>& leftPorts,
+                                 const std::vector<std::int8_t>& rightPorts,
                                  PID drivePID, PID turnPID)
         : leftMotors(leftPorts), rightMotors(rightPorts), imu(nullptr),
-            drivePID(drivePID), turnPID(turnPID) {}
+            drivePID(drivePID), turnPID(turnPID), headingKP(0.0) {}
 
 Chassis::Chassis(pros::Motor &left, pros::Motor &right)
         : leftMotors(left), rightMotors(right), imu(nullptr),
-            drivePID(0.0, 0.0, 0.0), turnPID(0.0, 0.0, 0.0) {}
+            drivePID(0.0, 0.0, 0.0), turnPID(0.0, 0.0, 0.0), headingKP(0.0) {}
 
 void Chassis::drive_forward(int speed, bool forward) {
     if (!forward) speed = -speed; // flip or sum
@@ -46,22 +47,40 @@ void Chassis::drive_distance(double inches) {
     double target = inches * ticksPerInch;
 
     leftMotors.tare_position_all();
+    rightMotors.tare_position_all();
     drivePID.reset();
 
+    // hold whatever heading we started at, if an IMU is connected
+    double startHeading = (imu != nullptr) ? imu->get_rotation() : 0.0;
+    std::uint32_t startTime = pros::millis();
+
     while (true) {
-        // average position across all left side motors
-        std::vector<double> positions = leftMotors.get_position_all();
-        double current = std::accumulate(positions.begin(), positions.end(), 0.0) / positions.size();
+        // average position across both sides so one side stalling, slipping,
+        // or being under more load than the other doesn't go unnoticed
+        std::vector<double> leftPositions = leftMotors.get_position_all();
+        std::vector<double> rightPositions = rightMotors.get_position_all();
+        double leftAvg = std::accumulate(leftPositions.begin(), leftPositions.end(), 0.0) / leftPositions.size();
+        double rightAvg = std::accumulate(rightPositions.begin(), rightPositions.end(), 0.0) / rightPositions.size();
+        double current = (leftAvg + rightAvg) / 2.0;
 
         double error = target - current;
         double output = drivePID.calculate(error);
 
         // clamp to motor move range (-127..127)
         double clamped = util::clamp(output, -127.0, 127.0);
-        leftMotors.move(static_cast<int>(clamped));
-        rightMotors.move(static_cast<int>(clamped));
+
+        // steer back toward the starting heading if we've drifted off it
+        double correction = 0.0;
+        if (imu != nullptr) {
+            double headingError = imu->get_rotation() - startHeading;
+            correction = headingKP * headingError;
+        }
+
+        leftMotors.move(static_cast<int>(util::clamp(clamped + correction, -127.0, 127.0)));
+        rightMotors.move(static_cast<int>(util::clamp(clamped - correction, -127.0, 127.0)));
 
         if (drivePID.isSettled(error)) break;
+        if (pros::millis() - startTime >= DRIVE_TIMEOUT_MS) break; // stalled/never converging - don't hang forever
 
         pros::delay(10);
     }
@@ -75,6 +94,7 @@ void Chassis::turn_degrees(double degrees) {
     double targetAngle = startAngle + degrees;
 
     turnPID.reset();
+    std::uint32_t startTime = pros::millis();
 
     while (true) {
         double error = targetAngle - imu->get_rotation();
@@ -90,6 +110,7 @@ void Chassis::turn_degrees(double degrees) {
 #endif
 
         if (turnPID.isSettled(error)) break;
+        if (pros::millis() - startTime >= TURN_TIMEOUT_MS) break; // stalled/never converging - don't hang forever
 
         pros::delay(10);
     }

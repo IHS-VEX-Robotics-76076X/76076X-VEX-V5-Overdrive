@@ -3,8 +3,20 @@
 #include "config.hpp"
 #include "util.hpp"
 
+#include <vector>
+
 void red_close_side();
 void blue_far_side();
+
+// Autonomous selector: cycled with the LCD left/right buttons in
+// competition_initialize() below, since blue_far_side() otherwise has no
+// way to run without recompiling and redeploying between matches.
+enum class AutonRoutine {
+	RED_CLOSE,
+	BLUE_FAR
+};
+
+static AutonRoutine selected_auton = AutonRoutine::RED_CLOSE;
 
 pros::Motor cascade_motor(CASCADE_MOTOR_PORT);
 pros::Motor intake_motor(INTAKE_MOTOR_PORT);
@@ -12,13 +24,16 @@ pros::Motor arm_turn_motor(ARM_TURN_MOTOR_PORT);
 pros::Motor clamp_motor(CLAMP_MOTOR_PORT);
 pros::Imu inertial_sensor(INERTIAL_SENSOR_PORT);
 
-// Drive train: 3 motors per side.
+// Drive train ports come from config.hpp - update the ports there, not here.
 Chassis myRobot(
-    {-1, -2, -3},
-    {4, 5, 6},
+    std::vector<std::int8_t>(LEFT_DRIVE_PORTS.begin(), LEFT_DRIVE_PORTS.end()),
+    std::vector<std::int8_t>(RIGHT_DRIVE_PORTS.begin(), RIGHT_DRIVE_PORTS.end()),
     &inertial_sensor,
-    PID(DEFAULT_DRIVE_KP, DEFAULT_DRIVE_KI, DEFAULT_DRIVE_KD),
-    PID(DEFAULT_TURN_KP, DEFAULT_TURN_KI, DEFAULT_TURN_KD)
+    PID(DEFAULT_DRIVE_KP, DEFAULT_DRIVE_KI, DEFAULT_DRIVE_KD,
+        DEFAULT_DRIVE_INTEGRAL_CAP, DEFAULT_DRIVE_SETTLE_ERROR, DEFAULT_DRIVE_SETTLE_VELOCITY),
+    PID(DEFAULT_TURN_KP, DEFAULT_TURN_KI, DEFAULT_TURN_KD,
+        DEFAULT_TURN_INTEGRAL_CAP, DEFAULT_TURN_SETTLE_ERROR, DEFAULT_TURN_SETTLE_VELOCITY),
+    DEFAULT_HEADING_KP
 ); // chassis
 
 /**
@@ -69,7 +84,22 @@ void disabled() {}
  * This task will exit when the robot is enabled and autonomous or opcontrol
  * starts.
  */
-void competition_initialize() {}
+void competition_initialize() {
+	while (true) {
+		auto buttons = pros::lcd::read_buttons();
+		if (buttons & LCD_BTN_LEFT) {
+			selected_auton = AutonRoutine::RED_CLOSE;
+		} else if (buttons & LCD_BTN_RIGHT) {
+			selected_auton = AutonRoutine::BLUE_FAR;
+		}
+
+		pros::lcd::set_text(3, selected_auton == AutonRoutine::RED_CLOSE
+		                            ? "Auton: RED CLOSE   (right > blue)"
+		                            : "Auton: BLUE FAR    (< left red)");
+
+		pros::delay(20);
+	}
+}
 
 /**
  * Runs the user autonomous code. This function will be started in its own task
@@ -83,7 +113,10 @@ void competition_initialize() {}
  * from where it left off.
  */
 void autonomous() {
-	red_close_side(); //replace with whatever side ig
+	switch (selected_auton) {
+		case AutonRoutine::RED_CLOSE: red_close_side(); break;
+		case AutonRoutine::BLUE_FAR:  blue_far_side();  break;
+	}
 }
 
 /**
