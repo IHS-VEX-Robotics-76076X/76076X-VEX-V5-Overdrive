@@ -1,0 +1,25 @@
+name: Host tests
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  chassis-tests:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: 76076X VEX V5
+    steps:
+      - uses: actions/checkout@v4
+
+      # The project's own Makefile still tries to link against the ARM
+      # firmware .ld scripts even under HOST_BUILD=1 (a pre-existing,
+      # unrelated issue), so compile the host test directly instead.
+      - name: Build host test
+        run: |
+          g++ -std=gnu++20 -pthread -Wall -DHOST_BUILD -Iinclude \
+              -o /tmp/test_chassis src/chassis.cpp src/util.cpp tests/test_chassis.cpp
+
+      - name: Run host test
+        run: /tmp/test_chassis
