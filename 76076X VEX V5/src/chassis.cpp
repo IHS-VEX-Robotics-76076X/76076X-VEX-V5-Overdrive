@@ -203,9 +203,16 @@ void Chassis::odomLoop() {
         double headingDeg = imu->get_rotation();
         double headingRad = headingDeg * M_PI / 180.0;
 
+        // heading is imu->get_rotation() directly - whatever direction the
+        // IMU (and therefore turn_degrees) calls "positive" - so position
+        // must accumulate using the matching compass-style convention
+        // (0 = +Y axis, clockwise-positive), not standard math cos/sin
+        // (0 = +X axis, counter-clockwise-positive). Using math convention
+        // here would make odometry believe "forward" rotates the opposite
+        // way turn_degrees actually turns the robot.
         odomMutex.take();
-        odomX += deltaCenter * std::cos(headingRad);
-        odomY += deltaCenter * std::sin(headingRad);
+        odomX += deltaCenter * std::sin(headingRad);
+        odomY += deltaCenter * std::cos(headingRad);
         odomHeading = headingDeg;
         odomMutex.give();
 
@@ -264,16 +271,26 @@ double Chassis::get_heading() const {
 void Chassis::drive_to_point(double targetX, double targetY) {
     if (imu == nullptr) return; // odometry requires an IMU
 
-    double dx = targetX - get_x();
-    double dy = targetY - get_y();
+    // Read (x, y, heading) as one consistent snapshot rather than three
+    // separate locked calls, which could otherwise straddle an odomLoop()
+    // update between reads.
+    odomMutex.take();
+    double currentX = odomX;
+    double currentY = odomY;
+    double currentHeading = odomHeading;
+    odomMutex.give();
+
+    double dx = targetX - currentX;
+    double dy = targetY - currentY;
     double distance = std::sqrt(dx * dx + dy * dy);
 
-    // Standard math angle (0 = +X axis, counter-clockwise positive), converted
-    // to the IMU's clockwise-positive rotation convention used by get_heading().
-    // Verify this sign convention against the real IMU before trusting it in a match.
-    double angleToTarget = 90.0 - (std::atan2(dy, dx) * 180.0 / M_PI);
+    // Bearing to the target using the same compass-style convention as
+    // odomLoop() (0 = +Y axis, clockwise-positive, matching imu->get_rotation()
+    // directly) - this is the inverse of odomLoop's sin/cos update, so it
+    // must use atan2(dx, dy), not the standard-math atan2(dy, dx).
+    double angleToTarget = std::atan2(dx, dy) * 180.0 / M_PI;
 
-    double turnAmount = angleToTarget - get_heading();
+    double turnAmount = angleToTarget - currentHeading;
     while (turnAmount > 180.0) turnAmount -= 360.0;
     while (turnAmount < -180.0) turnAmount += 360.0;
 

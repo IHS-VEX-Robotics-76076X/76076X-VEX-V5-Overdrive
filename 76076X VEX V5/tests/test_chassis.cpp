@@ -113,9 +113,44 @@ static void test_odometry_tracks_straight_line_drive() {
     double heading = robot.get_heading();
     std::cout << "  x=" << x << " y=" << y << " heading=" << heading << "\n";
 
-    assert(std::abs(x - 12.0) < 3.0);  // drove ~12in forward
-    assert(std::abs(y) < 0.5);         // stayed on the starting heading
+    // Heading 0 = +Y axis (compass-style convention, see Chassis::odomLoop),
+    // so driving straight at heading 0 moves along Y, not X.
+    assert(std::abs(y - 12.0) < 3.0);  // drove ~12in forward
+    assert(std::abs(x) < 0.5);         // stayed on the starting heading
     assert(std::abs(heading) < 1.0);
+}
+
+// Unlike the straight-line test above, this forces an actual turn before
+// driving - which is what catches a mismatch between the direction
+// turn_degrees() rotates the robot and the direction odomLoop() thinks
+// "forward" points (a real bug that was here: odomLoop used standard-math
+// cos/sin on a heading value that turn_degrees treats as clockwise-positive,
+// so the two disagreed about which way the robot was facing after any turn -
+// invisible to a test that never turns, since both conventions agree at
+// heading 0).
+static void test_drive_to_point_reaches_off_axis_target() {
+    std::cout << "[test] drive_to_point reaches a target that requires turning first\n";
+
+    pros::Imu imu(0);
+    imu.set_rotation(0.0);
+    PID drivePid(0.5, 0.0, 0.0);
+    PID turnPid(1.0, 0.0, 0.0);
+    Chassis robot({11}, {12}, &imu, drivePid, turnPid);
+
+    robot.reset_position(0.0, 0.0, 0.0);
+    robot.start_odometry();
+    robot.drive_to_point(10.0, 0.0); // due +X: requires turning ~90 deg off the starting heading
+    pros::delay(30);
+    robot.stop_odometry();
+
+    double x = robot.get_x();
+    double y = robot.get_y();
+    double heading = robot.get_heading();
+    std::cout << "  x=" << x << " y=" << y << " heading=" << heading << "\n";
+
+    assert(std::abs(x - 10.0) < 2.0);
+    assert(std::abs(y) < 2.0);
+    assert(std::abs(heading - 90.0) < ANGLE_TOLERANCE_DEG);
 }
 
 int main() {
@@ -126,6 +161,7 @@ int main() {
     test_swing_turn_only_moves_one_side();
     test_drive_and_turn_timeout_when_gains_never_converge();
     test_odometry_tracks_straight_line_drive();
+    test_drive_to_point_reaches_off_axis_target();
 
     std::cout << "All chassis tests passed.\n";
     return 0;
