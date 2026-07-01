@@ -33,14 +33,20 @@ Chassis::~Chassis() {
 }
 
 void Chassis::drive_forward(int speed, bool forward) {
-    if (!forward) speed = -speed; // flip or sum
+    if (!forward) speed = -speed;
+    speed = static_cast<int>(util::clamp(speed, -127.0, 127.0));
     leftMotors.move(speed);
     rightMotors.move(speed);
 }
 
 void Chassis::drive(int leftSpeed, int rightSpeed) {
-    leftMotors.move(leftSpeed);
-    rightMotors.move(rightSpeed);
+    // Callers commonly sum two independent joystick axes (e.g. arcade drive:
+    // forward +/- turn), which can easily land outside the +/-127 motor
+    // range even though each axis alone is in range - clamp here so every
+    // caller gets a safe value instead of relying on each call site (or
+    // undocumented device-side clamping) to do it.
+    leftMotors.move(static_cast<int>(util::clamp(leftSpeed, -127.0, 127.0)));
+    rightMotors.move(static_cast<int>(util::clamp(rightSpeed, -127.0, 127.0)));
 }
 
 void Chassis::stop() {
@@ -196,7 +202,7 @@ void Chassis::odomLoop() {
         prevRight = rightAvg;
 
         double deltaCenter = (deltaLeftIn + deltaRightIn) / 2.0;
-        double headingDeg = imu->get_rotation();
+        double headingDeg = imu->get_rotation() + headingOffset.load();
         double headingRad = headingDeg * M_PI / 180.0;
 
         // heading is imu->get_rotation() directly - whatever direction the
@@ -234,6 +240,13 @@ void Chassis::stop_odometry() {
 }
 
 void Chassis::reset_position(double x, double y, double headingDeg) {
+    // headingOffset makes odomHeading track (imu rotation + offset) rather
+    // than the raw IMU value, so the declared headingDeg actually persists
+    // instead of being overwritten by the next odomLoop() tick.
+    if (imu != nullptr) {
+        headingOffset = headingDeg - imu->get_rotation();
+    }
+
     odomMutex.take();
     odomX = x;
     odomY = y;

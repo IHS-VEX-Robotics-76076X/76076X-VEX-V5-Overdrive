@@ -74,6 +74,32 @@ static void test_drive_distance_converges() {
     assert(std::abs(target - rightPos) < DISTANCE_TOLERANCE_TICKS);
 }
 
+// drive()/drive_forward() used to pass their inputs straight to the motors
+// with no clamping. That's fine for a single joystick axis (already in
+// range), but opcontrol's arcade mixing sums two independent axes
+// (forward +/- turn), which routinely exceeds +/-127 whenever a driver
+// pushes both sticks hard - a completely ordinary driving scenario, not an
+// edge case.
+static void test_drive_and_drive_forward_clamp_output() {
+    std::cout << "[test] drive()/drive_forward() clamp output to +/-127\n";
+
+    PID drivePid(0.5, 0.0, 0.0);
+    PID turnPid(1.0, 0.0, 0.0);
+    Chassis robot({40}, {41}, drivePid, turnPid);
+
+    robot.drive(200, -200); // e.g. forward=100, turn=100 in arcade mixing
+    int leftVoltage = pros::host_get_motor_voltage(40);
+    int rightVoltage = pros::host_get_motor_voltage(41);
+    std::cout << "  drive(200, -200): left=" << leftVoltage << " right=" << rightVoltage << "\n";
+    assert(leftVoltage == 127);
+    assert(rightVoltage == -127);
+
+    robot.drive_forward(500, true);
+    int forwardVoltage = pros::host_get_motor_voltage(40);
+    std::cout << "  drive_forward(500, true): left=" << forwardVoltage << "\n";
+    assert(forwardVoltage == 127);
+}
+
 static void test_turn_degrees_converges() {
     std::cout << "[test] turn_degrees converges on target angle\n";
 
@@ -197,6 +223,41 @@ static void test_drive_to_point_reaches_off_axis_target() {
     assert(std::abs(heading - 90.0) < ANGLE_TOLERANCE_DEG);
 }
 
+// reset_position()'s headingDeg used to only "stick" until the next
+// odomLoop() tick (~10ms later), which unconditionally overwrote odomHeading
+// with the IMU's raw, unmodified rotation - silently discarding whatever
+// heading the caller had just declared. Checking immediately after the call
+// (like test_odometry_tracks_straight_line_drive does, implicitly, by
+// starting from heading 0 == the IMU's own default) can't catch this; this
+// test declares a *nonzero* heading and waits past several odometry ticks.
+static void test_reset_position_heading_persists() {
+    std::cout << "[test] reset_position's heading persists past the next odometry tick\n";
+
+    pros::Imu imu(0);
+    imu.set_rotation(0.0); // IMU itself still thinks it's at 0
+    PID drivePid(0.5, 0.0, 0.0);
+    PID turnPid(1.0, 0.0, 0.0);
+    Chassis robot({19}, {20}, &imu, drivePid, turnPid);
+
+    robot.start_odometry();
+    robot.reset_position(5.0, 5.0, 45.0); // declare "I'm at (5,5) facing 45 degrees"
+    pros::delay(50); // several odometry ticks - the bug would revert this to 0 within ~10ms
+
+    double heading = robot.get_heading();
+    std::cout << "  heading=" << heading << " (expect ~45, not reverted to the IMU's raw 0)\n";
+    assert(std::abs(heading - 45.0) < 1.0);
+
+    // and it should keep tracking further rotation relative to that new
+    // reference, not just freeze at the declared value
+    imu.set_rotation(10.0);
+    pros::delay(30);
+    double headingAfterTurn = robot.get_heading();
+    std::cout << "  heading after +10deg IMU turn=" << headingAfterTurn << " (expect ~55)\n";
+    assert(std::abs(headingAfterTurn - 55.0) < 1.0);
+
+    robot.stop_odometry();
+}
+
 // drive_distance() used to call tare_position_all() on every call, which
 // resets the shared physical/simulated encoder counters to 0. odomLoop()
 // (running continuously in the background once start_odometry() is called,
@@ -263,11 +324,13 @@ int main() {
     std::cout << "Host test: Chassis\n";
 
     test_drive_distance_converges();
+    test_drive_and_drive_forward_clamp_output();
     test_turn_degrees_converges();
     test_swing_turn_only_moves_one_side();
     test_drive_and_turn_timeout_when_gains_never_converge();
     test_odometry_tracks_straight_line_drive();
     test_drive_to_point_reaches_off_axis_target();
+    test_reset_position_heading_persists();
     test_odometry_survives_multiple_drive_calls();
     test_chassis_destructor_stops_odometry_without_crashing();
 

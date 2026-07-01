@@ -28,6 +28,11 @@ class Chassis {
         double odomX = 0.0;
         double odomY = 0.0;
         double odomHeading = 0.0;
+        // odomHeading is always imu->get_rotation() + headingOffset, never the
+        // raw IMU value directly - otherwise reset_position()'s headingDeg
+        // would only "stick" until the next odomLoop() tick (~10ms later),
+        // which then overwrites it with the IMU's own unmodified reading.
+        std::atomic<double> headingOffset{0.0};
         mutable pros::Mutex odomMutex;
         std::atomic<bool> odomRunning{false};
         std::optional<pros::Task> odomTask;
@@ -75,6 +80,10 @@ class Chassis {
         // initialize()) to begin tracking position; requires an IMU.
         void start_odometry();
         void stop_odometry();
+        // Declares the robot's current (x, y, headingDeg). headingDeg is kept
+        // as an offset from the IMU's own rotation, so it persists (get_heading()
+        // will keep reporting it, adjusted as the robot turns) rather than being
+        // overwritten by the IMU's raw reading on the next odometry tick.
         void reset_position(double x = 0.0, double y = 0.0, double headingDeg = 0.0);
         double get_x() const;
         double get_y() const;
