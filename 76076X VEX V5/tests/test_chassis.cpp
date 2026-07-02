@@ -415,6 +415,95 @@ static void test_odometry_survives_multiple_drive_calls() {
     assert(std::abs(yAfterSecondLeg - 20.0) < 5.0);
 }
 
+// A disconnected drive motor makes get_position_all() return PROS_ERR_F
+// (infinity) for that motor - odomLoop() used to feed that straight into
+// odomX/odomY (sum-with-infinity is infinity, and "infinity += anything
+// finite" stays infinity forever, even after the motor reconnects). A single
+// loose wire mid-match would have permanently destroyed position tracking
+// for the rest of it. Verifies position freezes (not corrupts) during a
+// disconnection and resumes correctly afterward.
+static void test_odometry_survives_drive_motor_disconnection() {
+    std::cout << "[test] odometry survives a drive motor disconnecting mid-run\n";
+
+    pros::Imu imu(0);
+    imu.set_rotation(0.0);
+    PID drivePid(0.5, 0.0, 0.0);
+    PID turnPid(1.0, 0.0, 0.0);
+    Chassis robot({70}, {71}, &imu, drivePid, turnPid);
+
+    robot.reset_position(0.0, 0.0, 0.0);
+    robot.start_odometry();
+    robot.drive_distance(10.0);
+    pros::delay(30);
+    double yBefore = robot.get_y();
+    std::cout << "  before disconnect: y=" << yBefore << "\n";
+
+    pros::host_set_motor_connected(70, false);
+    pros::delay(50); // several odomLoop ticks while "disconnected"
+    double yDuring = robot.get_y();
+    std::cout << "  during disconnect: y=" << yDuring << " (must stay finite and unchanged)\n";
+    assert(std::isfinite(yDuring));
+    assert(std::abs(yDuring - yBefore) < 0.01); // frozen, not corrupted
+
+    pros::host_set_motor_connected(70, true); // reconnect - don't leak state into later tests
+    robot.drive_distance(10.0);
+    pros::delay(30);
+    double yAfter = robot.get_y();
+    std::cout << "  after reconnect + another 10in drive: y=" << yAfter << " (expect ~20)\n";
+    assert(std::isfinite(yAfter));
+    assert(std::abs(yAfter - 20.0) < 5.0);
+
+    robot.stop_odometry();
+}
+
+// Same failure mode as above, but for a disconnected tracking wheel
+// (pros::Rotation::get_position() returns PROS_ERR, a large-but-finite
+// sentinel int rather than infinity - std::isfinite() alone wouldn't catch
+// this one, which is why odomLoop() checks for PROS_ERR explicitly on the
+// tracking wheel path).
+static void test_odometry_survives_tracking_wheel_disconnection() {
+    std::cout << "[test] odometry survives a tracking wheel disconnecting mid-run\n";
+
+    pros::Imu imu(0);
+    imu.set_rotation(0.0);
+    pros::Rotation leftWheel(80);
+    pros::Rotation rightWheel(81);
+    PID drivePid(0.5, 0.0, 0.0);
+    PID turnPid(1.0, 0.0, 0.0);
+    Chassis robot({82}, {83}, &imu, drivePid, turnPid);
+
+    robot.set_tracking_wheels(&leftWheel, &rightWheel, nullptr, TRACKING_WHEEL_DIAMETER_INCH);
+    robot.reset_position(0.0, 0.0, 0.0);
+    robot.start_odometry();
+    pros::delay(30);
+
+    double centideg10in = 10.0 / TRACKING_WHEEL_INCHES_PER_CENTIDEGREE;
+    leftWheel.set_position(centideg10in);
+    rightWheel.set_position(centideg10in);
+    pros::delay(30);
+    double yBefore = robot.get_y();
+    std::cout << "  before disconnect: y=" << yBefore << "\n";
+
+    leftWheel.set_connected(false);
+    pros::delay(50);
+    double yDuring = robot.get_y();
+    std::cout << "  during disconnect: y=" << yDuring << " (must stay finite and unchanged)\n";
+    assert(std::isfinite(yDuring));
+    assert(std::abs(yDuring - yBefore) < 0.01);
+
+    leftWheel.set_connected(true); // reconnect - don't leak state into later tests
+    double centideg20in = 20.0 / TRACKING_WHEEL_INCHES_PER_CENTIDEGREE;
+    leftWheel.set_position(centideg20in);
+    rightWheel.set_position(centideg20in);
+    pros::delay(30);
+    double yAfter = robot.get_y();
+    std::cout << "  after reconnect (wheels now read 20in total): y=" << yAfter << " (expect ~20)\n";
+    assert(std::isfinite(yAfter));
+    assert(std::abs(yAfter - 20.0) < 0.5);
+
+    robot.stop_odometry();
+}
+
 // Deliberately does NOT call stop_odometry() before robot goes out of scope.
 // Chassis's destructor must stop the background task itself - otherwise (on
 // host builds) the task's underlying thread just gets detached and keeps
@@ -454,6 +543,8 @@ int main() {
     test_drive_to_point_without_odometry_is_a_no_op();
     test_reset_position_heading_persists();
     test_odometry_survives_multiple_drive_calls();
+    test_odometry_survives_drive_motor_disconnection();
+    test_odometry_survives_tracking_wheel_disconnection();
     test_chassis_destructor_stops_odometry_without_crashing();
 
     std::cout << "All chassis tests passed.\n";

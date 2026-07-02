@@ -14,6 +14,20 @@
 #include <mutex>
 #include <cerrno>
 #include <set>
+#include <cmath>
+#include <cstdint>
+#include <climits>
+
+// Matches include/pros/error.h exactly (not included here - that whole
+// directory is skipped under HOST_BUILD, see api.h). Chassis::odomLoop()
+// checks these directly to detect a disconnected motor/sensor, so both
+// builds need the same sentinel values available.
+#ifndef PROS_ERR
+#define PROS_ERR (INT32_MAX)
+#endif
+#ifndef PROS_ERR_F
+#define PROS_ERR_F (INFINITY)
+#endif
 
 namespace pros {
 
@@ -177,13 +191,18 @@ class Imu {
 // directly via set_position() to simulate a known physical movement.
 class Rotation {
     public:
-        Rotation(int port) : centidegrees(0.0) {}
-        std::int32_t get_position() const { return static_cast<std::int32_t>(centidegrees.load()); }
+        Rotation(int port) : centidegrees(0.0), connected(true) {}
+        std::int32_t get_position() const {
+            if (!connected.load()) { errno = ENODEV; return PROS_ERR; }
+            return static_cast<std::int32_t>(centidegrees.load());
+        }
         std::int32_t reset_position() { centidegrees = 0.0; return 1; }
         std::int32_t set_reversed(bool value) { return 1; } // not modeled in the host mock
         void set_position(double centideg) { centidegrees = centideg; } // host-only test hook
+        void set_connected(bool isConnected) { connected = isConnected; } // host-only test hook
     private:
         std::atomic<double> centidegrees; // same concurrency reasoning as Imu::angle above
+        std::atomic<bool> connected;
 };
 
 class Controller {
@@ -267,7 +286,13 @@ inline void host_increment_motor_position(int port, double delta) {
 inline double host_get_motor_position(int port) {
     std::lock_guard<std::mutex> lock(__host_motors_mutex);
     if (!has_motor(port)) create_motor(port);
-    if (__host_disconnected_motors.count(port)) errno = ENODEV;
+    // Real hardware returns PROS_ERR_F (infinity) for a disconnected motor,
+    // not its last known position - odomLoop() relies on this to detect and
+    // reject a bad reading instead of integrating garbage into position.
+    if (__host_disconnected_motors.count(port)) {
+        errno = ENODEV;
+        return PROS_ERR_F;
+    }
     return __host_motors[port].get_position();
 }
 // Lets host-only test code (not production Chassis logic) observe what a

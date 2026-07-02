@@ -232,18 +232,34 @@ void Chassis::odomLoop() {
         double deltaStrafe = 0.0;
 
         if (useTrackingWheels) {
-            double left = leftTrackingWheel->get_position();
-            double right = rightTrackingWheel->get_position();
-            double deltaLeftIn = (left - prevLeft) * trackingWheelInchesPerCentidegree;
-            double deltaRightIn = (right - prevRight) * trackingWheelInchesPerCentidegree;
-            prevLeft = left;
-            prevRight = right;
-            deltaForward = (deltaLeftIn + deltaRightIn) / 2.0;
+            // A disconnected/faulted Rotation sensor returns PROS_ERR (a huge
+            // sentinel, not a small or zero value) instead of a real reading.
+            // Integrating that directly would inject a multi-thousand-inch
+            // spurious jump into position that can never be undone - once
+            // odomX/odomY holds garbage, "+= anything finite" never fixes it.
+            // Skip this tick's contribution instead: movement during the
+            // disconnection is lost, but that's far better than permanently
+            // wrecking the whole position estimate.
+            std::int32_t leftRaw = leftTrackingWheel->get_position();
+            std::int32_t rightRaw = rightTrackingWheel->get_position();
+
+            if (leftRaw != PROS_ERR && rightRaw != PROS_ERR) {
+                double left = leftRaw;
+                double right = rightRaw;
+                double deltaLeftIn = (left - prevLeft) * trackingWheelInchesPerCentidegree;
+                double deltaRightIn = (right - prevRight) * trackingWheelInchesPerCentidegree;
+                prevLeft = left;
+                prevRight = right;
+                deltaForward = (deltaLeftIn + deltaRightIn) / 2.0;
+            }
 
             if (backTrackingWheel != nullptr) {
-                double back = backTrackingWheel->get_position();
-                deltaStrafe = (back - prevBack) * trackingWheelInchesPerCentidegree;
-                prevBack = back;
+                std::int32_t backRaw = backTrackingWheel->get_position();
+                if (backRaw != PROS_ERR) {
+                    double back = backRaw;
+                    deltaStrafe = (back - prevBack) * trackingWheelInchesPerCentidegree;
+                    prevBack = back;
+                }
             }
         } else {
             // Fallback: drive motor encoders (slip-prone, but always available).
@@ -252,12 +268,20 @@ void Chassis::odomLoop() {
             double leftAvg = std::accumulate(leftPositions.begin(), leftPositions.end(), 0.0) / leftPositions.size();
             double rightAvg = std::accumulate(rightPositions.begin(), rightPositions.end(), 0.0) / rightPositions.size();
 
-            double deltaLeftIn = (leftAvg - prevLeft) / TICKS_PER_INCH;
-            double deltaRightIn = (rightAvg - prevRight) / TICKS_PER_INCH;
-            prevLeft = leftAvg;
-            prevRight = rightAvg;
+            // Same reasoning as above: a disconnected drive motor makes
+            // get_position_all() return PROS_ERR_F (infinity) for that
+            // motor, which poisons the average (sum-with-infinity stays
+            // infinity) and then odomX/odomY permanently - std::isfinite()
+            // catches it here since, unlike PROS_ERR above, PROS_ERR_F is
+            // actually infinity, not just a large finite number.
+            if (std::isfinite(leftAvg) && std::isfinite(rightAvg)) {
+                double deltaLeftIn = (leftAvg - prevLeft) / TICKS_PER_INCH;
+                double deltaRightIn = (rightAvg - prevRight) / TICKS_PER_INCH;
+                prevLeft = leftAvg;
+                prevRight = rightAvg;
 
-            deltaForward = (deltaLeftIn + deltaRightIn) / 2.0;
+                deltaForward = (deltaLeftIn + deltaRightIn) / 2.0;
+            }
         }
 
         double headingDeg = imu->get_rotation() + headingOffset.load();
