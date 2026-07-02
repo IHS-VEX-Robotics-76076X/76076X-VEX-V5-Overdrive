@@ -124,6 +124,7 @@ class Motor {
         void set_voltage(int v) { voltage = v; } // updates voltage only, not position (MotorGroup::move() tracks position separately)
         void set_brake_mode(int mode) { /* no motor dynamics to brake in the host mock */ }
         std::uint32_t get_faults() const { return 0; }
+        int get_port() const { return port; } // matches real pros::Motor/Device::get_port()
     private:
         int port;
         double position;
