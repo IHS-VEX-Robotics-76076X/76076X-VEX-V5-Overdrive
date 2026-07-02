@@ -66,24 +66,38 @@ ifdef HOST_BUILD
 # rules below (quick/all) - those pass ARM-only linker flags
 # (--gc-keep-exported, -Tfirmware/v5.ld, etc.) to whatever linker HOST_CXX
 # resolves to, which isn't arm-none-eabi-ld and doesn't understand them.
-# `make HOST_BUILD=1` builds and runs the host test suite directly instead;
-# add more .cpp files to HOST_TEST_SRC if you add more host tests.
+# `make HOST_BUILD=1` builds and runs every host test binary below instead.
+#
+# To add a new host test: drop tests/test_<name>.cpp somewhere, add a
+# CHASSIS_TEST_BIN-style variable + build rule for it below (copy an
+# existing pair and rename), and add its binary to HOST_TEST_BINS.
 HOST_CXX ?= g++
-HOST_TEST_SRC := src/chassis.cpp src/util.cpp tests/test_chassis.cpp
-HOST_TEST_BIN := $(BINDIR)/host_test
+HOST_CXXFLAGS := -std=gnu++20 -pthread -Wall -DHOST_BUILD -I$(INCDIR)
+
+CHASSIS_TEST_SRC := src/chassis.cpp src/util.cpp tests/test_chassis.cpp
+CHASSIS_TEST_BIN := $(BINDIR)/host_test_chassis
+
+UTIL_TEST_SRC := src/util.cpp tests/test_util.cpp
+UTIL_TEST_BIN := $(BINDIR)/host_test_util
+
+HOST_TEST_BINS := $(CHASSIS_TEST_BIN) $(UTIL_TEST_BIN)
 
 .DEFAULT_GOAL=host-test
 
 .PHONY: host-test clean
-host-test: $(HOST_TEST_BIN)
-	$(HOST_TEST_BIN)
+host-test: $(HOST_TEST_BINS)
+	@for bin in $(HOST_TEST_BINS); do $$bin || exit 1; done
 
-$(HOST_TEST_BIN): $(HOST_TEST_SRC)
-	@mkdir -p $(dir $(HOST_TEST_BIN))
-	$(HOST_CXX) -std=gnu++20 -pthread -Wall -DHOST_BUILD -I$(INCDIR) -o $@ $(HOST_TEST_SRC)
+$(CHASSIS_TEST_BIN): $(CHASSIS_TEST_SRC)
+	@mkdir -p $(dir $(CHASSIS_TEST_BIN))
+	$(HOST_CXX) $(HOST_CXXFLAGS) -o $@ $(CHASSIS_TEST_SRC)
+
+$(UTIL_TEST_BIN): $(UTIL_TEST_SRC)
+	@mkdir -p $(dir $(UTIL_TEST_BIN))
+	$(HOST_CXX) $(HOST_CXXFLAGS) -o $@ $(UTIL_TEST_SRC)
 
 clean:
-	rm -f $(HOST_TEST_BIN)
+	rm -f $(HOST_TEST_BINS)
 else
 -include ./common.mk
 endif

@@ -19,6 +19,18 @@ class Chassis {
         PID turnPID;
         double headingKP; // corrects drift during drive_distance using the IMU (0 = no correction)
 
+        // Optional tracking wheels for odometry (see set_tracking_wheels()).
+        // leftTrackingWheel/rightTrackingWheel are the two parallel wheels;
+        // both must be set for tracking wheels to be used at all - without
+        // them, odomLoop() falls back to the (slip-prone) drive motor
+        // encoders. backTrackingWheel is independently optional even when
+        // the parallel wheels are set: nullptr just means no strafe/lateral
+        // tracking, not a fallback to encoders.
+        pros::Rotation *leftTrackingWheel = nullptr;
+        pros::Rotation *rightTrackingWheel = nullptr;
+        pros::Rotation *backTrackingWheel = nullptr;
+        double trackingWheelInchesPerCentidegree = 0.0;
+
         // Dead-reckoned odometry (inches, degrees), updated by a background
         // task started with start_odometry(). Requires an IMU for heading -
         // without one, start_odometry() is a no-op. (x, y) use a compass-style
@@ -75,6 +87,18 @@ class Chassis {
         void swing_turn(double degrees, DriveSide pivotSide); // turns using only one side, pivoting on the other (locked) side
 
         bool has_fault() const; // true if any drivetrain motor is reporting an over-temp/over-current/driver fault
+
+        // Attaches dedicated (non-powered) tracking wheels for odometry,
+        // decoupled from drive-motor wheel slip. Call once before
+        // start_odometry() - if never called, odometry falls back to the
+        // drive motor encoders. leftWheel/rightWheel are the two parallel
+        // (forward-measuring) wheels; backWheel is the perpendicular
+        // (strafe-measuring) wheel - pass nullptr for it if you don't have
+        // one (you still get slip-free forward tracking from the parallel
+        // wheels, just no lateral/strafe component). Heading still comes
+        // from the IMU either way - see the odomHeading comment above.
+        void set_tracking_wheels(pros::Rotation *leftWheel, pros::Rotation *rightWheel,
+                                  pros::Rotation *backWheel, double wheelDiameterInch);
 
         // Dead-reckoned odometry. Call start_odometry() once (e.g. from
         // initialize()) to begin tracking position; requires an IMU.
