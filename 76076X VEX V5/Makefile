@@ -59,4 +59,31 @@ TEMPLATE_FILES=$(INCDIR)/$(LIBNAME)/*.h $(INCDIR)/$(LIBNAME)/*.hpp
 ################################################################################
 ################################################################################
 ########## Nothing below this line should be edited by typical users ###########
+
+ifdef HOST_BUILD
+# Host builds compile against the mock API in include/host/ and run on the
+# developer's machine, so they can't go through common.mk's device-build
+# rules below (quick/all) - those pass ARM-only linker flags
+# (--gc-keep-exported, -Tfirmware/v5.ld, etc.) to whatever linker HOST_CXX
+# resolves to, which isn't arm-none-eabi-ld and doesn't understand them.
+# `make HOST_BUILD=1` builds and runs the host test suite directly instead;
+# add more .cpp files to HOST_TEST_SRC if you add more host tests.
+HOST_CXX ?= g++
+HOST_TEST_SRC := src/chassis.cpp src/util.cpp tests/test_chassis.cpp
+HOST_TEST_BIN := $(BINDIR)/host_test
+
+.DEFAULT_GOAL=host-test
+
+.PHONY: host-test clean
+host-test: $(HOST_TEST_BIN)
+	$(HOST_TEST_BIN)
+
+$(HOST_TEST_BIN): $(HOST_TEST_SRC)
+	@mkdir -p $(dir $(HOST_TEST_BIN))
+	$(HOST_CXX) -std=gnu++20 -pthread -Wall -DHOST_BUILD -I$(INCDIR) -o $@ $(HOST_TEST_SRC)
+
+clean:
+	rm -f $(HOST_TEST_BIN)
+else
 -include ./common.mk
+endif

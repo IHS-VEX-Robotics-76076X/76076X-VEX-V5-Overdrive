@@ -156,7 +156,9 @@ class Imu {
     public:
         Imu(int port) : angle(0.0) {}
         double get_rotation() const { return angle.load(); }
-        void reset() { angle = 0.0; }
+        // Host mock has no real calibration delay to simulate, so `blocking`
+        // is accepted (to match the real signature) but has no effect.
+        std::int32_t reset(bool blocking = false) { angle = 0.0; return 1; }
         void set_rotation(double a) { angle = a; }
     private:
         // atomic, not a plain double: real hardware's IMU is safe to read
