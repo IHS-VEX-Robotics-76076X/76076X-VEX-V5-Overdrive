@@ -330,11 +330,11 @@ sites in `main.cpp`:
 
 #### Pending tasks
 
-### software to do list:
+### Software to do list:
 1. strenghten the library and/or check for bugs
 2. organize folders(maybe?)
 
-### hardware to do list:
+### Hardware to do list:
 1. Drivetrain motor ports/wheel geometry: `config.hpp`, `LEFT_DRIVE_PORTS`, `RIGHT_DRIVE_PORTS`, `WHEEL_DIAMETER_INCH`, `GEAR_RATIO`, `TICKS_PER_REV`
 2. Mechanism motor ports: `config.hpp`, `CASCADE_MOTOR_PORT`, `INTAKE_MOTOR_PORT`, `ARM_TURN_MOTOR_PORT`, `CLAMP_MOTOR_PORT`
 3. IMU port: `config.hpp`, `INERTIAL_SENSOR_PORT`
