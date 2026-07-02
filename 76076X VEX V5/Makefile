@@ -80,7 +80,10 @@ CHASSIS_TEST_BIN := $(BINDIR)/host_test_chassis
 UTIL_TEST_SRC := src/util.cpp tests/test_util.cpp
 UTIL_TEST_BIN := $(BINDIR)/host_test_util
 
-HOST_TEST_BINS := $(CHASSIS_TEST_BIN) $(UTIL_TEST_BIN)
+PID_TEST_SRC := tests/test_pid.cpp
+PID_TEST_BIN := $(BINDIR)/host_test_pid
+
+HOST_TEST_BINS := $(CHASSIS_TEST_BIN) $(UTIL_TEST_BIN) $(PID_TEST_BIN)
 
 .DEFAULT_GOAL=host-test
 
@@ -95,6 +98,10 @@ $(CHASSIS_TEST_BIN): $(CHASSIS_TEST_SRC)
 $(UTIL_TEST_BIN): $(UTIL_TEST_SRC)
 	@mkdir -p $(dir $(UTIL_TEST_BIN))
 	$(HOST_CXX) $(HOST_CXXFLAGS) -o $@ $(UTIL_TEST_SRC)
+
+$(PID_TEST_BIN): $(PID_TEST_SRC)
+	@mkdir -p $(dir $(PID_TEST_BIN))
+	$(HOST_CXX) $(HOST_CXXFLAGS) -o $@ $(PID_TEST_SRC)
 
 clean:
 	rm -f $(HOST_TEST_BINS)

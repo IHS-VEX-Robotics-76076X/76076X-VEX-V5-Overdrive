@@ -25,16 +25,18 @@ brew install arm-none-eabi-gcc
 
 ## Building and running the host tests
 
-`tests/test_chassis.cpp` and `tests/test_util.cpp` exercise the `Chassis`/
-`PID`/`util::` logic on your own machine (no robot required, no ARM
-toolchain needed) against a mock PROS API in `include/host/`:
+`tests/test_chassis.cpp`, `tests/test_util.cpp`, and `tests/test_pid.cpp`
+exercise the `Chassis`/`PID`/`util::` logic on your own machine (no robot
+required, no ARM toolchain needed) against a mock PROS API in
+`include/host/`:
 
 ```bash
 make HOST_BUILD=1
 ```
 
-This builds `bin/host_test_chassis` and `bin/host_test_util` and runs both.
-It's a separate path from the normal ARM device build (see `Makefile`) -
+This builds `bin/host_test_chassis`, `bin/host_test_util`, and
+`bin/host_test_pid`, and runs all three. It's a separate path from the
+normal ARM device build (see `Makefile`) -
 `HOST_BUILD=1` compiles with your system's own `g++` instead of
 cross-compiling for the V5 brain, since the host tests link and run right
 here rather than getting uploaded to a robot. This is exactly what CI runs
@@ -110,6 +112,15 @@ turn PID (error in degrees, 0-180) need very different scales -
 `config.hpp`'s `DEFAULT_DRIVE_*`/`DEFAULT_TURN_*` constants set sane defaults
 for each. `isSettled()` requires both the error and its rate of change to be
 small, so a fast pass through the target isn't mistaken for having arrived.
+
+`calculate(error, measurement)` takes the raw process variable
+(`measurement`) in addition to `error`, not just `error` alone - the
+derivative term is computed on the measurement's rate of change, not the
+error's ("derivative-on-measurement"), so a step change in the target alone
+(e.g. calling `turn_degrees()` right after `reset()`) can't be misread as a
+huge, fake rate of change and spike the output. Call `reset()` between
+movements so the old integral/derivative state doesn't bleed into the next
+one.
 
 ## Configuration (`include/config.hpp`)
 
