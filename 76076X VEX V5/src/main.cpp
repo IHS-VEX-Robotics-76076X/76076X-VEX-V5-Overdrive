@@ -4,6 +4,7 @@
 #include "util.hpp"
 
 #include <vector>
+#include <atomic>
 
 void red_close_side();
 void blue_far_side();
@@ -42,9 +43,11 @@ Chassis myRobot(
     DEFAULT_HEADING_KP
 ); // chassis
 
-// Toggled by the LCD center button; opcontrol.cpp reads this to decide
-// whether to show live battery/controller/fault status on LCD line 2.
-bool show_status = false;
+// Toggled by the LCD center button (its own PROS task) and read every
+// opcontrol() loop iteration (a different task) - plain bool would be an
+// unsynchronized cross-task race, so this needs to be atomic even though
+// both sides only ever do a simple load/store.
+std::atomic<bool> show_status{false};
 
 /**
  * A callback function for LLEMU's center button.

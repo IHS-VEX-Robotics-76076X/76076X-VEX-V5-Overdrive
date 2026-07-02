@@ -3,6 +3,7 @@
 #include <cmath>
 #include <atomic>
 #include <thread>
+#include <chrono>
 
 #include "chassis.hpp"
 #include "config.hpp"
@@ -156,6 +157,37 @@ static void test_swing_turn_only_moves_one_side() {
 
     assert(std::abs(leftPos) < 1.0);   // pivot side never received nonzero output
     assert(std::abs(rightPos) > 1.0);  // the other side actually moved
+}
+
+// Every other exit path from turn_degrees()/swing_turn() (both loop-break
+// conditions) ends by calling stop() - a caller can rely on "the robot is
+// stopped" once either function returns. The no-IMU early return used to be
+// the exception: it returned immediately without stopping, so whatever the
+// drivetrain was doing before the call (e.g. still spinning from opcontrol,
+// or this being the very first movement of an autonomous routine) would
+// simply continue uninterrupted.
+static void test_turn_functions_stop_motors_even_without_an_imu() {
+    std::cout << "[test] turn_degrees()/swing_turn() stop the motors even with no IMU attached\n";
+
+    PID drivePid(0.5, 0.0, 0.0);
+    PID turnPid(1.0, 0.0, 0.0);
+    Chassis robot({100}, {101}, drivePid, turnPid); // no-IMU constructor
+
+    robot.drive(127, 127); // simulate the drivetrain already spinning
+    robot.turn_degrees(90.0); // no-op without an IMU, but must still stop the motors
+    int leftAfterTurn = pros::host_get_motor_voltage(100);
+    int rightAfterTurn = pros::host_get_motor_voltage(101);
+    std::cout << "  after turn_degrees (no IMU): left=" << leftAfterTurn << " right=" << rightAfterTurn << "\n";
+    assert(leftAfterTurn == 0);
+    assert(rightAfterTurn == 0);
+
+    robot.drive(127, 127);
+    robot.swing_turn(45.0, Chassis::DriveSide::LEFT);
+    int leftAfterSwing = pros::host_get_motor_voltage(100);
+    int rightAfterSwing = pros::host_get_motor_voltage(101);
+    std::cout << "  after swing_turn (no IMU): left=" << leftAfterSwing << " right=" << rightAfterSwing << "\n";
+    assert(leftAfterSwing == 0);
+    assert(rightAfterSwing == 0);
 }
 
 // A drivePID/turnPID with all-zero gains always outputs 0, so the motors
@@ -341,6 +373,41 @@ static void test_drive_to_point_without_odometry_is_a_no_op() {
     assert(rightPos == 0.0);
 }
 
+// A target the robot is already at has no well-defined bearing -
+// atan2(~0, ~0) still returns an angle (0 in the exact-zero case), which
+// used to be read as "turn to face heading 0" and spin the robot for the
+// full turn timeout even though it had already arrived. drive_to_point()
+// should recognize a negligible distance and skip both the turn and the
+// drive entirely.
+static void test_drive_to_point_at_current_position_is_a_no_op() {
+    std::cout << "[test] drive_to_point to (essentially) the current position doesn't spuriously turn\n";
+
+    pros::Imu imu(0);
+    imu.set_rotation(37.0); // some arbitrary non-zero heading
+    PID drivePid(0.5, 0.0, 0.0);
+    PID turnPid(1.0, 0.0, 0.0);
+    Chassis robot({54}, {55}, &imu, drivePid, turnPid);
+
+    robot.start_odometry();
+    robot.reset_position(5.0, 5.0, 37.0);
+    pros::delay(30);
+
+    auto start = std::chrono::steady_clock::now();
+    robot.drive_to_point(5.0, 5.0); // already at the target
+    auto elapsedMs = std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::steady_clock::now() - start).count();
+
+    double leftPos = pros::host_get_motor_position(54);
+    double rightPos = pros::host_get_motor_position(55);
+    std::cout << "  elapsed=" << elapsedMs << "ms left=" << leftPos << " right=" << rightPos
+               << " (expect near-instant, no motor movement)\n";
+    assert(elapsedMs < 500); // a spurious turn would burn the ~2000ms turn timeout
+    assert(std::abs(leftPos) < 1.0);
+    assert(std::abs(rightPos) < 1.0);
+
+    robot.stop_odometry();
+}
+
 // reset_position()'s headingDeg used to only "stick" until the next
 // odomLoop() tick (~10ms later), which unconditionally overwrote odomHeading
 // with the IMU's raw, unmodified rotation - silently discarding whatever
@@ -504,6 +571,42 @@ static void test_odometry_survives_tracking_wheel_disconnection() {
     robot.stop_odometry();
 }
 
+// The two tests above prove odomLoop() survives a disconnection *during* a
+// run - but its baseline (prevLeft/prevRight) used to be seeded from a
+// single unvalidated read *before* the loop even started. If a motor was
+// disconnected at that exact moment (e.g. a loose wire right when
+// start_odometry() runs), the baseline itself was corrupted, and every
+// later delta - computed as (freshValidReading - corruptedBaseline) - stayed
+// garbage forever, completely bypassing the per-tick validation the two
+// tests above exercise. Confirmed empirically before fixing: y came out as
+// -inf here. odomLoop() must instead seed its baseline lazily, from
+// whichever tick first produces a valid reading.
+static void test_odometry_survives_disconnection_at_startup() {
+    std::cout << "[test] odometry recovers when a motor is disconnected at start_odometry() time\n";
+
+    pros::Imu imu(0);
+    imu.set_rotation(0.0);
+    PID drivePid(0.5, 0.0, 0.0);
+    PID turnPid(1.0, 0.0, 0.0);
+    Chassis robot({90}, {91}, &imu, drivePid, turnPid);
+
+    pros::host_set_motor_connected(90, false); // disconnected before odometry even starts
+    robot.reset_position(0.0, 0.0, 0.0);
+    robot.start_odometry(); // seeds its baseline while port 90 is still disconnected
+    pros::delay(30);
+
+    pros::host_set_motor_connected(90, true); // reconnect - don't leak state into later tests
+    robot.drive_distance(10.0);
+    pros::delay(30);
+
+    double y = robot.get_y();
+    std::cout << "  y=" << y << " (expect ~10, finite - not corrupted by the bad initial seed)\n";
+    assert(std::isfinite(y));
+    assert(std::abs(y - 10.0) < 3.0);
+
+    robot.stop_odometry();
+}
+
 // Deliberately does NOT call stop_odometry() before robot goes out of scope.
 // Chassis's destructor must stop the background task itself - otherwise (on
 // host builds) the task's underlying thread just gets detached and keeps
@@ -535,16 +638,19 @@ int main() {
     test_has_fault_detects_disconnected_motor();
     test_turn_degrees_converges();
     test_swing_turn_only_moves_one_side();
+    test_turn_functions_stop_motors_even_without_an_imu();
     test_drive_and_turn_timeout_when_gains_never_converge();
     test_odometry_tracks_straight_line_drive();
     test_tracking_wheel_odometry_pure_forward();
     test_tracking_wheel_odometry_pure_strafe();
     test_drive_to_point_reaches_off_axis_target();
     test_drive_to_point_without_odometry_is_a_no_op();
+    test_drive_to_point_at_current_position_is_a_no_op();
     test_reset_position_heading_persists();
     test_odometry_survives_multiple_drive_calls();
     test_odometry_survives_drive_motor_disconnection();
     test_odometry_survives_tracking_wheel_disconnection();
+    test_odometry_survives_disconnection_at_startup();
     test_chassis_destructor_stops_odometry_without_crashing();
 
     std::cout << "All chassis tests passed.\n";
