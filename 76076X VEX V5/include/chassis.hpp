@@ -90,8 +90,10 @@ class Chassis {
         double get_heading() const; // degrees, IMU rotation convention (clockwise-positive)
 
         // Turns to face (targetX, targetY) then drives straight to it, using
-        // odometry for feedback. This is sequential point-to-point ("go to
-        // point") following, not curvature-based pure pursuit - the (x, y)
+        // odometry for feedback. Requires start_odometry() to already be
+        // running (a no-op otherwise - without it there's no live position to
+        // navigate from). This is sequential point-to-point ("go to point")
+        // following, not curvature-based pure pursuit - the (x, y)
         // convention is internally consistent with odometry, but which
         // physical direction on the field is "+X"/"+Y" still depends on
         // however the IMU happens to be oriented, so verify on a real robot.

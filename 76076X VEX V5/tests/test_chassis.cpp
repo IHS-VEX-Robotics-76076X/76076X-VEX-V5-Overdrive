@@ -223,6 +223,32 @@ static void test_drive_to_point_reaches_off_axis_target() {
     assert(std::abs(heading - 90.0) < ANGLE_TOLERANCE_DEG);
 }
 
+// drive_to_point()/follow_path() used to have no way of knowing whether
+// odometry was actually running - without start_odometry(), odomX/odomY are
+// just their default (0, 0), so calling drive_to_point() would silently
+// drive the robot based on stale position data with no error or indication
+// anything was wrong. Confirmed empirically before fixing: the robot
+// physically moved (nonzero encoder deltas) even though get_x()/get_y()
+// still reported (0, 0) afterward. It should now be a safe no-op instead.
+static void test_drive_to_point_without_odometry_is_a_no_op() {
+    std::cout << "[test] drive_to_point without start_odometry() doesn't move the robot\n";
+
+    pros::Imu imu(0);
+    imu.set_rotation(0.0);
+    PID drivePid(0.5, 0.0, 0.0);
+    PID turnPid(1.0, 0.0, 0.0);
+    Chassis robot({52}, {53}, &imu, drivePid, turnPid);
+
+    // deliberately never call start_odometry()
+    robot.drive_to_point(10.0, 10.0);
+
+    double leftPos = pros::host_get_motor_position(52);
+    double rightPos = pros::host_get_motor_position(53);
+    std::cout << "  left=" << leftPos << " right=" << rightPos << " (expect 0, 0 - no-op)\n";
+    assert(leftPos == 0.0);
+    assert(rightPos == 0.0);
+}
+
 // reset_position()'s headingDeg used to only "stick" until the next
 // odomLoop() tick (~10ms later), which unconditionally overwrote odomHeading
 // with the IMU's raw, unmodified rotation - silently discarding whatever
@@ -330,6 +356,7 @@ int main() {
     test_drive_and_turn_timeout_when_gains_never_converge();
     test_odometry_tracks_straight_line_drive();
     test_drive_to_point_reaches_off_axis_target();
+    test_drive_to_point_without_odometry_is_a_no_op();
     test_reset_position_heading_persists();
     test_odometry_survives_multiple_drive_calls();
     test_chassis_destructor_stops_odometry_without_crashing();

@@ -278,7 +278,12 @@ double Chassis::get_heading() const {
 // --- Point-to-point following ---------------------------------------------
 
 void Chassis::drive_to_point(double targetX, double targetY) {
-    if (imu == nullptr) return; // odometry requires an IMU
+    // Without start_odometry() having been called, odomX/odomY/odomHeading
+    // are just their default-initialized (or last reset_position()) values -
+    // never updated. Driving off that stale state would silently move the
+    // robot based on a position it isn't actually at, with no error or
+    // indication anything is wrong.
+    if (imu == nullptr || !odomRunning) return;
 
     // Read (x, y, heading) as one consistent snapshot rather than three
     // separate locked calls, which could otherwise straddle an odomLoop()
