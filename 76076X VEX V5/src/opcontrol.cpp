@@ -9,13 +9,14 @@
 #include "util.hpp"
 
 #include <cstdio>
+#include <atomic>
 
 extern Chassis myRobot;
 extern pros::Motor cascade_motor;
 extern pros::Motor intake_motor;
 extern pros::Motor arm_turn_motor;
 extern pros::Motor clamp_motor;
-extern bool show_status; // toggled by the LCD center button (see main.cpp)
+extern std::atomic<bool> show_status; // toggled by the LCD center button (see main.cpp)
 
 // Shows robot battery %, controller connection, and any drivetrain/mechanism
 // motor faults on LCD line 2, when show_status is toggled on.

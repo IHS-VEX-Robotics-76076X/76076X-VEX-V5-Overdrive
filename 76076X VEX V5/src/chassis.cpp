@@ -139,7 +139,14 @@ void Chassis::drive_distance(double inches) {
 }
 
 void Chassis::turn_degrees(double degrees) {
-    if (imu == nullptr) return; // no IMU available
+    // Every other exit path from this function (both loop-break conditions
+    // below) ends by calling stop(), so a caller can rely on "the robot is
+    // stopped" once turn_degrees() returns. Returning early here without
+    // stopping would break that: without an IMU there's nothing this
+    // function can safely command, but the drivetrain could still be
+    // spinning from whatever ran before this call (e.g. straight into this
+    // being the very first movement of an autonomous routine).
+    if (imu == nullptr) { stop(); return; }
     double startAngle = imu->get_rotation(); // get_rotation() is unbounded unlike get_heading()
     double targetAngle = startAngle + degrees;
 
@@ -164,7 +171,9 @@ void Chassis::turn_degrees(double degrees) {
 }
 
 void Chassis::swing_turn(double degrees, DriveSide pivotSide) {
-    if (imu == nullptr) return; // no IMU available
+    // Same reasoning as turn_degrees() above: every other exit path ends
+    // with stop(), so this one shouldn't be the exception.
+    if (imu == nullptr) { stop(); return; }
     double startAngle = imu->get_rotation();
     double targetAngle = startAngle + degrees;
 
@@ -210,17 +219,18 @@ void Chassis::odomLoop() {
     // the back wheel is independently optional (checked separately below).
     bool useTrackingWheels = (leftTrackingWheel != nullptr && rightTrackingWheel != nullptr);
 
+    // Baseline for computing deltas, seeded lazily by the first VALID
+    // reading rather than unconditionally before the loop starts. Seeding
+    // from a disconnected sensor's sentinel value (PROS_ERR/PROS_ERR_F)
+    // would corrupt every delta computed against it from then on
+    // ((freshReading - corruptedBaseline) is still garbage) even with the
+    // per-tick validation below - that validation only protects the CURRENT
+    // reading, not a baseline that was already bad when it was captured. A
+    // sensor being disconnected at the exact moment start_odometry() runs
+    // (e.g. a loose wire at boot) is exactly the scenario that needs this.
+    bool seeded = false;
+    bool backSeeded = false;
     double prevLeft = 0.0, prevRight = 0.0, prevBack = 0.0;
-    if (useTrackingWheels) {
-        prevLeft = leftTrackingWheel->get_position();
-        prevRight = rightTrackingWheel->get_position();
-        if (backTrackingWheel != nullptr) prevBack = backTrackingWheel->get_position();
-    } else {
-        std::vector<double> initialLeft = leftMotors.get_position_all();
-        std::vector<double> initialRight = rightMotors.get_position_all();
-        prevLeft = std::accumulate(initialLeft.begin(), initialLeft.end(), 0.0) / initialLeft.size();
-        prevRight = std::accumulate(initialRight.begin(), initialRight.end(), 0.0) / initialRight.size();
-    }
 
     while (odomRunning) {
         // deltaForward: distance traveled straight ahead this tick.
@@ -246,18 +256,26 @@ void Chassis::odomLoop() {
             if (leftRaw != PROS_ERR && rightRaw != PROS_ERR) {
                 double left = leftRaw;
                 double right = rightRaw;
-                double deltaLeftIn = (left - prevLeft) * trackingWheelInchesPerCentidegree;
-                double deltaRightIn = (right - prevRight) * trackingWheelInchesPerCentidegree;
+                if (seeded) {
+                    double deltaLeftIn = (left - prevLeft) * trackingWheelInchesPerCentidegree;
+                    double deltaRightIn = (right - prevRight) * trackingWheelInchesPerCentidegree;
+                    deltaForward = (deltaLeftIn + deltaRightIn) / 2.0;
+                } else {
+                    seeded = true; // this reading becomes the baseline; no delta yet
+                }
                 prevLeft = left;
                 prevRight = right;
-                deltaForward = (deltaLeftIn + deltaRightIn) / 2.0;
             }
 
             if (backTrackingWheel != nullptr) {
                 std::int32_t backRaw = backTrackingWheel->get_position();
                 if (backRaw != PROS_ERR) {
                     double back = backRaw;
-                    deltaStrafe = (back - prevBack) * trackingWheelInchesPerCentidegree;
+                    if (backSeeded) {
+                        deltaStrafe = (back - prevBack) * trackingWheelInchesPerCentidegree;
+                    } else {
+                        backSeeded = true;
+                    }
                     prevBack = back;
                 }
             }
@@ -275,12 +293,15 @@ void Chassis::odomLoop() {
             // catches it here since, unlike PROS_ERR above, PROS_ERR_F is
             // actually infinity, not just a large finite number.
             if (std::isfinite(leftAvg) && std::isfinite(rightAvg)) {
-                double deltaLeftIn = (leftAvg - prevLeft) / TICKS_PER_INCH;
-                double deltaRightIn = (rightAvg - prevRight) / TICKS_PER_INCH;
+                if (seeded) {
+                    double deltaLeftIn = (leftAvg - prevLeft) / TICKS_PER_INCH;
+                    double deltaRightIn = (rightAvg - prevRight) / TICKS_PER_INCH;
+                    deltaForward = (deltaLeftIn + deltaRightIn) / 2.0;
+                } else {
+                    seeded = true;
+                }
                 prevLeft = leftAvg;
                 prevRight = rightAvg;
-
-                deltaForward = (deltaLeftIn + deltaRightIn) / 2.0;
             }
         }
 
@@ -382,6 +403,13 @@ void Chassis::drive_to_point(double targetX, double targetY) {
     double dx = targetX - currentX;
     double dy = targetY - currentY;
     double distance = std::sqrt(dx * dx + dy * dy);
+
+    // A target the robot is already (essentially) at has no well-defined
+    // bearing - atan2(~0, ~0) still returns some angle (0 in the exact-zero
+    // case), which would otherwise be read as "turn to face that direction"
+    // and spin the robot toward heading 0 for no reason, burning the full
+    // turn timeout in the process. Skip both the turn and the drive instead.
+    if (distance < 0.5) return; // inches
 
     // Bearing to the target using the same compass-style convention as
     // odomLoop() (0 = +Y axis, clockwise-positive, matching imu->get_rotation()
