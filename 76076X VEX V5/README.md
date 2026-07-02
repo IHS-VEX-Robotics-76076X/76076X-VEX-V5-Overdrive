@@ -26,20 +26,21 @@ brew install arm-none-eabi-gcc
 ## Building and running the host tests
 
 `tests/test_chassis.cpp` exercises the `Chassis`/`PID` logic on your own
-machine (no robot required) against a mock PROS API in `include/host/`.
-
-> **Note:** `make HOST_BUILD=1` does not currently work - it still tries to
-> link against the ARM firmware `.ld` scripts. Compile the test directly
-> with `g++` instead:
+machine (no robot required, no ARM toolchain needed) against a mock PROS API
+in `include/host/`:
 
 ```bash
-g++ -std=gnu++20 -pthread -Wall -DHOST_BUILD -Iinclude \
-    -o /tmp/test_chassis src/chassis.cpp src/util.cpp tests/test_chassis.cpp
-/tmp/test_chassis
+make HOST_BUILD=1
 ```
 
+This builds `bin/host_test` and runs it. It's a separate path from the
+normal ARM device build (see `Makefile`) - `HOST_BUILD=1` compiles
+`src/chassis.cpp`, `src/util.cpp`, and `tests/test_chassis.cpp` with your
+system's own `g++` instead of cross-compiling for the V5 brain, since the
+host tests link and run right here rather than getting uploaded to a robot.
 This is exactly what CI runs on every push/PR (see
-`.github/workflows/host-tests.yml`).
+`.github/workflows/host-tests.yml`). Add more `.cpp` files to
+`HOST_TEST_SRC` in the `Makefile` if you add more host tests.
 
 ## Chassis API
 
@@ -125,9 +126,11 @@ sites in `main.cpp`:
 
 ## Known limitations
 
-- `make HOST_BUILD=1` doesn't work (see above) - use the direct `g++`
-  command or `.github/workflows/host-tests.yml` as a reference.
 - `follow_path`/`drive_to_point` are basic go-to-point following, not a true
   curvature-based pure pursuit path follower.
 - Odometry and `drive_to_point` require an IMU; there's no encoder-only
   (differential-drive) heading fallback.
+- Nothing in `initialize()` waits for the IMU to finish calibrating (real V5
+  Inertial Sensors take a couple of seconds after power-on) - `get_rotation()`
+  can return garbage if `turn_degrees`/`swing_turn`/odometry run too soon
+  after boot.

@@ -59,6 +59,14 @@ void on_center_button() {
  */
 void initialize() {
 	pros::lcd::initialize();
+	pros::lcd::set_text(1, "Calibrating IMU...");
+
+	// Blocks ~2s until calibration finishes (3s safety timeout) - the IMU's
+	// get_rotation() is meaningless before this, which would otherwise throw
+	// off turn_degrees()/swing_turn()/odometry if they ran too soon after
+	// power-on.
+	inertial_sensor.reset(true);
+
 	pros::lcd::set_text(1, "76076X Overdrive - Ready");
 
 	pros::lcd::register_btn1_cb(on_center_button);
