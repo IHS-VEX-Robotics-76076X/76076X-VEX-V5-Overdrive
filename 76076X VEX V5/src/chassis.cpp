@@ -4,6 +4,7 @@
 
 #include <cmath>
 #include <cstdint>
+#include <cerrno>
 #include <numeric>
 
 // configuration/constants
@@ -57,12 +58,26 @@ void Chassis::stop() {
 bool Chassis::has_fault() const {
     for (auto flags : leftMotors.get_faults_all()) if (flags != 0) return true;
     for (auto flags : rightMotors.get_faults_all()) if (flags != 0) return true;
+
+    // get_faults_all()'s bitfield (over-temp/over-current/driver-fault) does
+    // NOT include "disconnected" - a fully unplugged motor doesn't report a
+    // fault flag at all, it just fails the next API call and sets errno.
+    // get_position_all() documents ENODEV for exactly this case, so use it
+    // as a cheap connectivity probe (MotorGroup has no is_installed() of its
+    // own - only individual pros::Motor objects do).
+    errno = 0;
+    leftMotors.get_position_all();
+    if (errno == ENODEV) return true;
+
+    errno = 0;
+    rightMotors.get_position_all();
+    if (errno == ENODEV) return true;
+
     return false;
 }
 
 void Chassis::drive_distance(double inches) {
-    double ticksPerInch = (TICKS_PER_REV * GEAR_RATIO) / (WHEEL_DIAMETER_INCH * M_PI);
-    double target = inches * ticksPerInch;
+    double target = inches * TICKS_PER_INCH;
 
     // Measure distance relative to a captured starting position instead of
     // tare_position_all(): taring resets the physical/shared encoder
@@ -182,26 +197,69 @@ void Chassis::swing_turn(double degrees, DriveSide pivotSide) {
 
 // --- Odometry -------------------------------------------------------------
 
-void Chassis::odomLoop() {
-    double ticksPerInch = (TICKS_PER_REV * GEAR_RATIO) / (WHEEL_DIAMETER_INCH * M_PI);
+void Chassis::set_tracking_wheels(pros::Rotation *leftWheel, pros::Rotation *rightWheel,
+                                   pros::Rotation *backWheel, double wheelDiameterInch) {
+    leftTrackingWheel = leftWheel;
+    rightTrackingWheel = rightWheel;
+    backTrackingWheel = backWheel;
+    trackingWheelInchesPerCentidegree = (wheelDiameterInch * M_PI) / 36000.0;
+}
 
-    std::vector<double> initialLeft = leftMotors.get_position_all();
-    std::vector<double> initialRight = rightMotors.get_position_all();
-    double prevLeft = std::accumulate(initialLeft.begin(), initialLeft.end(), 0.0) / initialLeft.size();
-    double prevRight = std::accumulate(initialRight.begin(), initialRight.end(), 0.0) / initialRight.size();
+void Chassis::odomLoop() {
+    // Both parallel wheels must be attached to use tracking wheels at all;
+    // the back wheel is independently optional (checked separately below).
+    bool useTrackingWheels = (leftTrackingWheel != nullptr && rightTrackingWheel != nullptr);
+
+    double prevLeft = 0.0, prevRight = 0.0, prevBack = 0.0;
+    if (useTrackingWheels) {
+        prevLeft = leftTrackingWheel->get_position();
+        prevRight = rightTrackingWheel->get_position();
+        if (backTrackingWheel != nullptr) prevBack = backTrackingWheel->get_position();
+    } else {
+        std::vector<double> initialLeft = leftMotors.get_position_all();
+        std::vector<double> initialRight = rightMotors.get_position_all();
+        prevLeft = std::accumulate(initialLeft.begin(), initialLeft.end(), 0.0) / initialLeft.size();
+        prevRight = std::accumulate(initialRight.begin(), initialRight.end(), 0.0) / initialRight.size();
+    }
 
     while (odomRunning) {
-        std::vector<double> leftPositions = leftMotors.get_position_all();
-        std::vector<double> rightPositions = rightMotors.get_position_all();
-        double leftAvg = std::accumulate(leftPositions.begin(), leftPositions.end(), 0.0) / leftPositions.size();
-        double rightAvg = std::accumulate(rightPositions.begin(), rightPositions.end(), 0.0) / rightPositions.size();
+        // deltaForward: distance traveled straight ahead this tick.
+        // deltaStrafe: sideways (local +X = robot's right) distance this
+        // tick - only ever nonzero with a back tracking wheel attached;
+        // there's no way to measure lateral drift from drive-motor encoders
+        // or a single pair of forward-facing wheels at all.
+        double deltaForward = 0.0;
+        double deltaStrafe = 0.0;
 
-        double deltaLeftIn = (leftAvg - prevLeft) / ticksPerInch;
-        double deltaRightIn = (rightAvg - prevRight) / ticksPerInch;
-        prevLeft = leftAvg;
-        prevRight = rightAvg;
+        if (useTrackingWheels) {
+            double left = leftTrackingWheel->get_position();
+            double right = rightTrackingWheel->get_position();
+            double deltaLeftIn = (left - prevLeft) * trackingWheelInchesPerCentidegree;
+            double deltaRightIn = (right - prevRight) * trackingWheelInchesPerCentidegree;
+            prevLeft = left;
+            prevRight = right;
+            deltaForward = (deltaLeftIn + deltaRightIn) / 2.0;
 
-        double deltaCenter = (deltaLeftIn + deltaRightIn) / 2.0;
+            if (backTrackingWheel != nullptr) {
+                double back = backTrackingWheel->get_position();
+                deltaStrafe = (back - prevBack) * trackingWheelInchesPerCentidegree;
+                prevBack = back;
+            }
+        } else {
+            // Fallback: drive motor encoders (slip-prone, but always available).
+            std::vector<double> leftPositions = leftMotors.get_position_all();
+            std::vector<double> rightPositions = rightMotors.get_position_all();
+            double leftAvg = std::accumulate(leftPositions.begin(), leftPositions.end(), 0.0) / leftPositions.size();
+            double rightAvg = std::accumulate(rightPositions.begin(), rightPositions.end(), 0.0) / rightPositions.size();
+
+            double deltaLeftIn = (leftAvg - prevLeft) / TICKS_PER_INCH;
+            double deltaRightIn = (rightAvg - prevRight) / TICKS_PER_INCH;
+            prevLeft = leftAvg;
+            prevRight = rightAvg;
+
+            deltaForward = (deltaLeftIn + deltaRightIn) / 2.0;
+        }
+
         double headingDeg = imu->get_rotation() + headingOffset.load();
         double headingRad = headingDeg * M_PI / 180.0;
 
@@ -211,10 +269,13 @@ void Chassis::odomLoop() {
         // (0 = +Y axis, clockwise-positive), not standard math cos/sin
         // (0 = +X axis, counter-clockwise-positive). Using math convention
         // here would make odometry believe "forward" rotates the opposite
-        // way turn_degrees actually turns the robot.
+        // way turn_degrees actually turns the robot. deltaStrafe (local +X,
+        // the robot's right) follows the same rotation: at heading 0,
+        // sliding right moves along global +X - the mirror image of
+        // deltaForward's heading-0 case of moving along global +Y.
         odomMutex.take();
-        odomX += deltaCenter * std::sin(headingRad);
-        odomY += deltaCenter * std::cos(headingRad);
+        odomX += deltaForward * std::sin(headingRad) + deltaStrafe * std::cos(headingRad);
+        odomY += deltaForward * std::cos(headingRad) - deltaStrafe * std::sin(headingRad);
         odomHeading = headingDeg;
         odomMutex.give();
 

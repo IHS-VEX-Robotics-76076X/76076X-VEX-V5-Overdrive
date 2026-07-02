@@ -2,6 +2,7 @@
 
 #include <array>
 #include <cstdint>
+#include <cmath>
 
 // Driver control style. ARCADE: one stick (left Y = forward, left X = turn).
 // TANK: two sticks (left Y = left side, right Y = right side). This is a tank
@@ -15,6 +16,12 @@ constexpr double WHEEL_DIAMETER_INCH = 3.25; // inches
 constexpr double GEAR_RATIO = 1.0;
 constexpr double TICKS_PER_REV = 300.0;
 
+// Computed once at compile time instead of every drive_distance()/odomLoop()
+// call - it's a pure function of the three constants above, so recomputing
+// it at runtime on every call was redundant (and risked drifting out of
+// sync if the formula ever changed in only one of the two call sites).
+constexpr double TICKS_PER_INCH = (TICKS_PER_REV * GEAR_RATIO) / (WHEEL_DIAMETER_INCH * M_PI);
+
 // Drive motor ports: 3 motors per side.
 // Left side uses reversed ports for a mirrored drivetrain.
 constexpr std::array<std::int8_t, 3> LEFT_DRIVE_PORTS = {-1, -2, -3};
@@ -26,6 +33,29 @@ constexpr int INTAKE_MOTOR_PORT = 8;
 constexpr int ARM_TURN_MOTOR_PORT = 9;
 constexpr int CLAMP_MOTOR_PORT = 10;
 constexpr int INERTIAL_SENSOR_PORT = 11;
+
+// Tracking wheel odometry (3-wheel: two parallel + one perpendicular).
+// Dedicated, non-powered wheels give slip-free position tracking - unlike
+// reading the drive motors' own encoders, they aren't thrown off by wheel
+// spin during acceleration or collisions. Ports use the same
+// negative-for-reversed convention as motor ports (see pros::Rotation).
+// Heading still comes from the IMU either way (see Chassis::odomLoop) - the
+// perpendicular wheel is what actually adds new information, since it
+// tracks lateral drift/scrub that encoder-only or single-wheel odometry
+// can't see at all.
+// TODO: set these to your actual tracking wheel ports/geometry. Pass
+// nullptr for backTrackingWheel in Chassis::set_tracking_wheels() if you
+// don't have a perpendicular wheel - you still get slip-free forward
+// tracking from the two parallel wheels alone, just no strafe component.
+constexpr std::int8_t LEFT_TRACKING_WHEEL_PORT = 12;
+constexpr std::int8_t RIGHT_TRACKING_WHEEL_PORT = -13;
+constexpr std::int8_t BACK_TRACKING_WHEEL_PORT = 14;
+constexpr double TRACKING_WHEEL_DIAMETER_INCH = 2.75; // common VEX tracking wheel size
+
+// pros::Rotation reports position in centidegrees (36000 per revolution) -
+// this is a fixed hardware constant, not something to tune. Computed once
+// at compile time for the same reason as TICKS_PER_INCH above.
+constexpr double TRACKING_WHEEL_INCHES_PER_CENTIDEGREE = (TRACKING_WHEEL_DIAMETER_INCH * M_PI) / 36000.0;
 
 // Default PID gains (safe defaults; tune for your robot)
 constexpr double DEFAULT_DRIVE_KP = 0.5;

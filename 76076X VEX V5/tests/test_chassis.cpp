@@ -64,8 +64,7 @@ static void test_drive_distance_converges() {
 
     robot.drive_distance(10.0); // inches
 
-    double ticksPerInch = (TICKS_PER_REV * GEAR_RATIO) / (WHEEL_DIAMETER_INCH * M_PI);
-    double target = 10.0 * ticksPerInch;
+    double target = 10.0 * TICKS_PER_INCH;
     double leftPos = pros::host_get_motor_position(1);
     double rightPos = pros::host_get_motor_position(2);
 
@@ -98,6 +97,29 @@ static void test_drive_and_drive_forward_clamp_output() {
     int forwardVoltage = pros::host_get_motor_voltage(40);
     std::cout << "  drive_forward(500, true): left=" << forwardVoltage << "\n";
     assert(forwardVoltage == 127);
+}
+
+// has_fault() used to only check get_faults_all()'s bitfield (over-temp/
+// over-current/driver-fault), which does NOT include "fully disconnected" -
+// a real unplugged motor doesn't set any fault flag, it just fails the next
+// API call and sets errno = ENODEV. This verifies has_fault() actually
+// catches that case now, using the host mock's disconnection simulation.
+static void test_has_fault_detects_disconnected_motor() {
+    std::cout << "[test] has_fault() detects a disconnected motor via errno\n";
+
+    PID drivePid(0.5, 0.0, 0.0);
+    PID turnPid(1.0, 0.0, 0.0);
+    Chassis robot({42}, {43}, drivePid, turnPid);
+
+    assert(!robot.has_fault()); // nothing disconnected yet
+
+    pros::host_set_motor_connected(42, false);
+    std::cout << "  after disconnecting port 42: has_fault()=" << robot.has_fault() << "\n";
+    assert(robot.has_fault());
+
+    pros::host_set_motor_connected(42, true); // reconnect - don't leak state into later tests
+    std::cout << "  after reconnecting: has_fault()=" << robot.has_fault() << "\n";
+    assert(!robot.has_fault());
 }
 
 static void test_turn_degrees_converges() {
@@ -187,6 +209,76 @@ static void test_odometry_tracks_straight_line_drive() {
     assert(std::abs(y - 12.0) < 3.0);  // drove ~12in forward
     assert(std::abs(x) < 0.5);         // stayed on the starting heading
     assert(std::abs(heading) < 1.0);
+}
+
+// Tracking wheels are unpowered and independent of the drive motors in the
+// mock (as on real hardware), so these tests drive them directly via
+// set_position() rather than through drive_distance() - that isolates the
+// odomLoop() math itself (does a tracking-wheel delta convert to (x, y)
+// correctly?) from whether the drivetrain happens to move in sync with them.
+static void test_tracking_wheel_odometry_pure_forward() {
+    std::cout << "[test] tracking wheel odometry: pure forward movement\n";
+
+    pros::Imu imu(0);
+    imu.set_rotation(0.0); // heading 0 throughout
+    pros::Rotation leftWheel(60);
+    pros::Rotation rightWheel(61);
+    PID drivePid(0.5, 0.0, 0.0);
+    PID turnPid(1.0, 0.0, 0.0);
+    Chassis robot({62}, {63}, &imu, drivePid, turnPid); // drive ports unused - tracking wheels take over
+
+    robot.set_tracking_wheels(&leftWheel, &rightWheel, nullptr, TRACKING_WHEEL_DIAMETER_INCH);
+    robot.reset_position(0.0, 0.0, 0.0);
+    robot.start_odometry();
+    pros::delay(30); // let odomLoop seed its baseline
+
+    double targetInches = 10.0;
+    double centideg = targetInches / TRACKING_WHEEL_INCHES_PER_CENTIDEGREE;
+    leftWheel.set_position(centideg);
+    rightWheel.set_position(centideg);
+    pros::delay(30); // let odomLoop pick up the change
+
+    robot.stop_odometry();
+
+    double x = robot.get_x();
+    double y = robot.get_y();
+    std::cout << "  x=" << x << " y=" << y << " (expect x~0, y~10)\n";
+    assert(std::abs(y - 10.0) < 0.5);
+    assert(std::abs(x) < 0.5);
+}
+
+// Only the back (perpendicular) tracking wheel moves here - this is exactly
+// the kind of lateral drift/scrub that drive-motor-encoder odometry (or even
+// two forward-only tracking wheels) has no way to detect at all.
+static void test_tracking_wheel_odometry_pure_strafe() {
+    std::cout << "[test] tracking wheel odometry: pure strafe (back wheel)\n";
+
+    pros::Imu imu(0);
+    imu.set_rotation(0.0);
+    pros::Rotation leftWheel(64);
+    pros::Rotation rightWheel(65);
+    pros::Rotation backWheel(66);
+    PID drivePid(0.5, 0.0, 0.0);
+    PID turnPid(1.0, 0.0, 0.0);
+    Chassis robot({67}, {68}, &imu, drivePid, turnPid);
+
+    robot.set_tracking_wheels(&leftWheel, &rightWheel, &backWheel, TRACKING_WHEEL_DIAMETER_INCH);
+    robot.reset_position(0.0, 0.0, 0.0);
+    robot.start_odometry();
+    pros::delay(30);
+
+    double targetInches = 5.0;
+    double centideg = targetInches / TRACKING_WHEEL_INCHES_PER_CENTIDEGREE;
+    backWheel.set_position(centideg);
+    pros::delay(30);
+
+    robot.stop_odometry();
+
+    double x = robot.get_x();
+    double y = robot.get_y();
+    std::cout << "  x=" << x << " y=" << y << " (expect x~5, y~0)\n";
+    assert(std::abs(x - 5.0) < 0.5);
+    assert(std::abs(y) < 0.5);
 }
 
 // Unlike the straight-line test above, this forces an actual turn before
@@ -351,10 +443,13 @@ int main() {
 
     test_drive_distance_converges();
     test_drive_and_drive_forward_clamp_output();
+    test_has_fault_detects_disconnected_motor();
     test_turn_degrees_converges();
     test_swing_turn_only_moves_one_side();
     test_drive_and_turn_timeout_when_gains_never_converge();
     test_odometry_tracks_straight_line_drive();
+    test_tracking_wheel_odometry_pure_forward();
+    test_tracking_wheel_odometry_pure_strafe();
     test_drive_to_point_reaches_off_axis_target();
     test_drive_to_point_without_odometry_is_a_no_op();
     test_reset_position_heading_persists();

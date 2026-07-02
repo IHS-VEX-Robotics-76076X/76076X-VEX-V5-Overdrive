@@ -12,6 +12,8 @@
 #include <cstdint>
 #include <utility>
 #include <mutex>
+#include <cerrno>
+#include <set>
 
 namespace pros {
 
@@ -169,6 +171,21 @@ class Imu {
         std::atomic<double> angle;
 };
 
+// Tracking wheel sensor. Unlike Motor, this isn't driven by anything else in
+// the mock (real tracking wheels are unpowered - nothing commands them, they
+// just spin freely and report position) - host tests set its position
+// directly via set_position() to simulate a known physical movement.
+class Rotation {
+    public:
+        Rotation(int port) : centidegrees(0.0) {}
+        std::int32_t get_position() const { return static_cast<std::int32_t>(centidegrees.load()); }
+        std::int32_t reset_position() { centidegrees = 0.0; return 1; }
+        std::int32_t set_reversed(bool value) { return 1; } // not modeled in the host mock
+        void set_position(double centideg) { centidegrees = centideg; } // host-only test hook
+    private:
+        std::atomic<double> centidegrees; // same concurrency reasoning as Imu::angle above
+};
+
 class Controller {
     public:
         Controller(int type) {}
@@ -220,6 +237,17 @@ inline std::map<int, Motor> __host_motors; // map must be declared after Motor i
 inline std::mutex __host_motors_mutex;
 inline bool has_motor(int port) { return __host_motors.find(port) != __host_motors.end(); }
 inline void create_motor(int port) { __host_motors.emplace(port, Motor(port)); }
+
+// Host-only: ports simulating a fully unplugged motor. Real PROS API calls
+// (e.g. get_position_all()) set errno = ENODEV in this case; the mock
+// reproduces that so has_fault()'s disconnection check is actually testable.
+inline std::set<int> __host_disconnected_motors;
+inline void host_set_motor_connected(int port, bool connected) {
+    std::lock_guard<std::mutex> lock(__host_motors_mutex);
+    if (connected) __host_disconnected_motors.erase(port);
+    else __host_disconnected_motors.insert(port);
+}
+
 inline void host_set_motor_position(int port, double pos) {
     std::lock_guard<std::mutex> lock(__host_motors_mutex);
     if (!has_motor(port)) create_motor(port);
@@ -239,6 +267,7 @@ inline void host_increment_motor_position(int port, double delta) {
 inline double host_get_motor_position(int port) {
     std::lock_guard<std::mutex> lock(__host_motors_mutex);
     if (!has_motor(port)) create_motor(port);
+    if (__host_disconnected_motors.count(port)) errno = ENODEV;
     return __host_motors[port].get_position();
 }
 // Lets host-only test code (not production Chassis logic) observe what a

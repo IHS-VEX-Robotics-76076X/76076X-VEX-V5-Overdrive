@@ -24,6 +24,12 @@ pros::Motor arm_turn_motor(ARM_TURN_MOTOR_PORT);
 pros::Motor clamp_motor(CLAMP_MOTOR_PORT);
 pros::Imu inertial_sensor(INERTIAL_SENSOR_PORT);
 
+// Tracking wheels for odometry - see set_tracking_wheels() below and the
+// port/geometry comments in config.hpp.
+pros::Rotation left_tracking_wheel(LEFT_TRACKING_WHEEL_PORT);
+pros::Rotation right_tracking_wheel(RIGHT_TRACKING_WHEEL_PORT);
+pros::Rotation back_tracking_wheel(BACK_TRACKING_WHEEL_PORT);
+
 // Drive train ports come from config.hpp - update the ports there, not here.
 Chassis myRobot(
     std::vector<std::int8_t>(LEFT_DRIVE_PORTS.begin(), LEFT_DRIVE_PORTS.end()),
@@ -78,6 +84,9 @@ void initialize() {
 	clamp_motor.set_brake_mode(E_MOTOR_BRAKE_HOLD);
 	intake_motor.set_brake_mode(E_MOTOR_BRAKE_BRAKE);
 
+	// Must be called before start_odometry() - see set_tracking_wheels() doc.
+	myRobot.set_tracking_wheels(&left_tracking_wheel, &right_tracking_wheel,
+	                             &back_tracking_wheel, TRACKING_WHEEL_DIAMETER_INCH);
 	myRobot.start_odometry();
 	util::fun();
 }
