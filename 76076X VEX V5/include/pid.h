@@ -25,15 +25,38 @@ class PID {
               settleError(settleError),
               settleVelocity(settleVelocity) {}
 
-        double calculate(double error) {
+        // measurement is the raw process variable (encoder position, IMU
+        // heading, ...) that error was computed from - i.e. error == target
+        // - measurement. Needed separately from error for derivative-on-
+        // measurement below.
+        double calculate(double error, double measurement) {
             integral += error;
 
             // windup guard so integral doesnt go absolutely crazy
             if (integral >  integralCap) integral =  integralCap;
             if (integral < -integralCap) integral = -integralCap;
 
-            derivative = error - prevError;
-            prevError = error;
+            // Derivative-on-measurement, not derivative-on-error: a step
+            // change in the target (e.g. a fresh drive_distance()/
+            // turn_degrees() call right after reset()) makes the error jump
+            // instantly even though the robot's actual position/heading
+            // didn't move at all. Differentiating the error would read that
+            // as a huge, entirely fake rate of change ("derivative kick"),
+            // producing a real output spike from a target change alone.
+            // Differentiating the measurement instead only reacts to how
+            // the physical process variable is actually moving.
+            //
+            // The first calculate() after construction/reset() has no prior
+            // measurement to diff against, so it seeds instead of computing
+            // a (likely huge, spurious) derivative from an assumed-zero
+            // baseline - the same lazy-seeding rationale used for odometry.
+            if (seeded) {
+                derivative = prevMeasurement - measurement;
+            } else {
+                derivative = 0.0;
+                seeded = true;
+            }
+            prevMeasurement = measurement;
 
             return (kP * error) + (kI * integral) + (kD * derivative);
         }
@@ -41,8 +64,8 @@ class PID {
         // call this between auton movements so old state doesnt bleed over
         void reset() {
             integral = 0;
-            prevError = 0;
             derivative = 0;
+            seeded = false;
         }
 
         // Settled once both the error and its rate of change (derivative) are
@@ -54,9 +77,10 @@ class PID {
         }
 
     private:
-        double integral   = 0;
-        double prevError  = 0;
-        double derivative = 0;
+        double integral        = 0;
+        double prevMeasurement = 0;
+        double derivative      = 0;
+        bool seeded             = false;
 
         double integralCap;   // cap so integral doesnt explode
         double settleError;   // how close the error must get
