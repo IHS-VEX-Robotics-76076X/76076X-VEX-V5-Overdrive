@@ -6,6 +6,7 @@
 #include <cstdint>
 #include <cerrno>
 #include <numeric>
+#include <cassert>
 
 // configuration/constants
 #include "config.hpp"
@@ -16,6 +17,15 @@ Chassis::Chassis(const std::vector<std::int8_t>& leftPorts,
                                  PID drivePID, PID turnPID, double headingKP)
         : leftMotors(leftPorts), rightMotors(rightPorts), imu(imu),
             drivePID(drivePID), turnPID(turnPID), headingKP(headingKP) {
+    // An empty side would silently divide-by-zero (0.0/0) into NaN every
+    // time drive_distance()/odomLoop() average that side's encoder
+    // positions, and NaN propagates forever from there (PID error, output,
+    // odometry position all go NaN with no crash or error to point at the
+    // real cause). Catch the misconfiguration here instead, at the one
+    // place it can be checked for both constructors, rather than as a
+    // mystery halfway through a match.
+    assert(!leftPorts.empty() && !rightPorts.empty() &&
+           "Chassis: leftPorts/rightPorts must not be empty - check LEFT_DRIVE_PORTS/RIGHT_DRIVE_PORTS in config.hpp");
     leftMotors.set_brake_mode_all(E_MOTOR_BRAKE_HOLD);
     rightMotors.set_brake_mode_all(E_MOTOR_BRAKE_HOLD);
 }
@@ -25,6 +35,8 @@ Chassis::Chassis(const std::vector<std::int8_t>& leftPorts,
                                  PID drivePID, PID turnPID)
         : leftMotors(leftPorts), rightMotors(rightPorts), imu(nullptr),
             drivePID(drivePID), turnPID(turnPID), headingKP(0.0) {
+    assert(!leftPorts.empty() && !rightPorts.empty() &&
+           "Chassis: leftPorts/rightPorts must not be empty - check LEFT_DRIVE_PORTS/RIGHT_DRIVE_PORTS in config.hpp");
     leftMotors.set_brake_mode_all(E_MOTOR_BRAKE_HOLD);
     rightMotors.set_brake_mode_all(E_MOTOR_BRAKE_HOLD);
 }
@@ -108,7 +120,7 @@ void Chassis::drive_distance(double inches) {
         double current = (leftAvg + rightAvg) / 2.0 - startAvg;
 
         double error = target - current;
-        double output = drivePID.calculate(error);
+        double output = drivePID.calculate(error, current);
 
         // clamp to motor move range (-127..127)
         double clamped = util::clamp(output, -127.0, 127.0);
@@ -154,8 +166,9 @@ void Chassis::turn_degrees(double degrees) {
     std::uint32_t startTime = pros::millis();
 
     while (true) {
-        double error = targetAngle - imu->get_rotation();
-        double output = turnPID.calculate(error);
+        double heading = imu->get_rotation();
+        double error = targetAngle - heading;
+        double output = turnPID.calculate(error, heading);
 
         double clamped = util::clamp(output, -127.0, 127.0);
         leftMotors.move(static_cast<int>(-clamped));  // opposite sides spin opposite ways to turn
@@ -181,8 +194,9 @@ void Chassis::swing_turn(double degrees, DriveSide pivotSide) {
     std::uint32_t startTime = pros::millis();
 
     while (true) {
-        double error = targetAngle - imu->get_rotation();
-        double output = turnPID.calculate(error);
+        double heading = imu->get_rotation();
+        double error = targetAngle - heading;
+        double output = turnPID.calculate(error, heading);
         double clamped = util::clamp(output, -127.0, 127.0);
 
         // only the non-pivot side moves; the pivot side stays locked (brake
