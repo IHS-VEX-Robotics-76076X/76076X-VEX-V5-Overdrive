@@ -234,18 +234,38 @@ existing `*_TEST_BIN` pair in the `Makefile`.
 
 ## Still to do
 
-### Software
+### Already settled
 
-1. Strengthen the library and keep checking for bugs
-2. Organize folders (maybe?)
+No need to revisit these.
+
+- Motor layout: 4 drivetrain, 2 cascade, 1 intake, 1 arm
+- Gear cartridges: blue drivetrain and intake, green cascade and arm
+- One forward-facing tracking wheel for odometry
+- `TICKS_PER_REV` is derived from the cartridge color automatically, so it can never fall out of sync
 
 ### Needs the real robot
 
-1. **Port numbers** in `config.hpp`, all currently placeholders: `LEFT_DRIVE_PORTS`, `RIGHT_DRIVE_PORTS`, `CASCADE_MOTOR_PORTS`, `INTAKE_MOTOR_PORT`, `ARM_MOTOR_PORT`, `INERTIAL_SENSOR_PORT`, `TRACKING_WHEEL_PORT`
+Everything here is a placeholder guess until someone measures it.
+
+1. **Port numbers** in `config.hpp`: `LEFT_DRIVE_PORTS`, `RIGHT_DRIVE_PORTS`, `CASCADE_MOTOR_PORTS`, `INTAKE_MOTOR_PORT`, `ARM_MOTOR_PORT`, `INERTIAL_SENSOR_PORT`, `TRACKING_WHEEL_PORT`
 2. **Wheel sizes and gearing** in `config.hpp`: `WHEEL_DIAMETER_INCH`, `GEAR_RATIO`, `TRACKING_WHEEL_DIAMETER_INCH`
-3. **PID tuning** in `config.hpp`, the biggest job, needs a real robot to test against: all the `DEFAULT_DRIVE_*` and `DEFAULT_TURN_*` gains, plus `DEFAULT_HEADING_KP` and `DRIVE_MAX_ACCEL_PER_LOOP`
-4. **Timeouts** in `config.hpp` once real speeds are known: `DRIVE_TIMEOUT_MS`, `TURN_TIMEOUT_MS`
-5. **Drive mode** in `config.hpp`, a driver preference: `DEFAULT_DRIVE_MODE`
-6. **Real autonomous routines** in `src/autonomous.cpp`, currently placeholders
-7. **Button mapping** in `src/opcontrol.cpp`, confirm with whoever is driving
-8. No pneumatics or extra sensors (distance, optical, vision) are wired up. Add if that hardware goes on the robot.
+3. **PID tuning** in `config.hpp`. This is the biggest job and it can only be done by driving the real robot: all the `DEFAULT_DRIVE_*` and `DEFAULT_TURN_*` gains, plus `DEFAULT_HEADING_KP` and `DRIVE_MAX_ACCEL_PER_LOOP`
+4. **Timeouts** in `config.hpp`, once real speeds are known: `DRIVE_TIMEOUT_MS`, `TURN_TIMEOUT_MS`
+5. **Check which way each motor spins.** Put a negative sign on the port if a motor runs backwards. Get this wrong and the robot fights itself or drives backwards.
+6. **Confirm the field directions.** Which corner counts as `+X` depends on how the IMU is mounted. Verify before trusting `drive_to_point` in a match.
+
+### Needs a team decision
+
+1. **Real autonomous routines** in `src/autonomous.cpp`. Currently placeholders that drive forward and back for one second. Needs the game strategy first.
+2. **Drive mode** in `config.hpp`: `DEFAULT_DRIVE_MODE`, arcade or tank. Ask whoever is driving.
+3. **Button mapping** in `src/opcontrol.cpp`. The current layout is a reasonable guess, not a decision.
+
+### Software
+
+1. Strengthen the library and keep checking for bugs
+2. Organize folders. Specifically, this README exists in two places (repo root and `76076X VEX V5/`) and the two copies have to be kept in sync by hand. Worth picking one.
+3. No pneumatics or extra sensors (distance, optical, vision) are wired up. Add if that hardware goes on the robot.
+
+### Your computer, not the code
+
+1. The `arm-none-eabi-gcc` install on the Mac used for this is missing its newlib headers, so `pros make` fails before it even reaches our code. Fix is under [Building](#onto-the-robot) above. `make HOST_BUILD=1` still works fine.
