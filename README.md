@@ -29,6 +29,10 @@ the robot is on the field the whole time.
 
 ## Which file does what
 
+All the code lives in the **`76076X VEX V5/`** folder. Every file path below
+is written relative to that folder, so `include/config.hpp` means
+`76076X VEX V5/include/config.hpp`.
+
 Start here when you are looking for something.
 
 ### Files you will actually edit
@@ -183,6 +187,13 @@ change `DEFAULT_DRIVE_MODE` in `config.hpp`.
 
 ## Building
 
+Both commands below have to be run from inside the project folder, not from
+the top of the repo. Get there first:
+
+```bash
+cd "76076X VEX V5"
+```
+
 ### Onto the robot
 
 ```bash
@@ -263,7 +274,7 @@ Everything here is a placeholder guess until someone measures it.
 ### Software
 
 1. Strengthen the library and keep checking for bugs
-2. Organize folders. Specifically, this README exists in two places (repo root and `76076X VEX V5/`) and the two copies have to be kept in sync by hand. Worth picking one.
+2. Organize folders (maybe?)
 3. No pneumatics or extra sensors (distance, optical, vision) are wired up. Add if that hardware goes on the robot.
 
 ### Your computer, not the code
