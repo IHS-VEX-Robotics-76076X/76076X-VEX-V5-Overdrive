@@ -6,121 +6,228 @@
 #include <optional>
 #include <atomic>
 
+// ===========================================================================
+//                              CHASSIS
+// ===========================================================================
+//
+// Everything to do with the drivetrain lives in this class:
+//
+//   - Driving and turning by hand (used by driver control)
+//   - Driving and turning exact amounts using PID (used by autonomous)
+//   - Tracking where the robot is on the field (odometry)
+//   - Driving to a specific spot on the field
+//
+// This is built for a TANK drivetrain: wheels on the left side and wheels
+// on the right side, all facing forward. The robot steers by spinning one
+// side faster than the other. It cannot slide sideways.
+//
+// ---------------------------------------------------------------------------
+// HOW POSITION TRACKING WORKS
+// ---------------------------------------------------------------------------
+//
+// The robot keeps a running guess of where it is, updated 100 times a
+// second in the background. It needs two pieces of information:
+//
+//   1. HOW FAR it has moved  -> from the tracking wheel, or if there is no
+//                               tracking wheel, from the drive motors.
+//   2. WHICH WAY it is facing -> always from the IMU (gyro).
+//
+// Put those together every few milliseconds and you can add up the robot's
+// path step by step. This is called dead reckoning.
+//
+// Because heading always comes from the IMU, odometry does NOT work without
+// one. start_odometry() simply does nothing if no IMU was given.
+//
+// ---------------------------------------------------------------------------
+// WHICH DIRECTION IS WHICH
+// ---------------------------------------------------------------------------
+//
+// Positions are (x, y) in inches. Heading is in degrees.
+//
+//   Heading 0    = facing along +Y
+//   Heading 90   = facing along +X
+//   Turning right (clockwise) makes the heading go UP
+//
+// This is compass style, like a real compass where north is 0 and east is
+// 90. It is NOT the convention used in math class (where 0 points along +X
+// and angles increase counter-clockwise). We use compass style because it
+// matches what the IMU reports directly, so nothing has to be flipped or
+// converted, and turn_degrees(+90) really does turn the robot right.
+//
+// One caveat: which physical corner of the field counts as "+X" depends
+// entirely on how the IMU is mounted and where the robot starts. Always
+// check this on the real robot before trusting it in a match.
+//
+// ===========================================================================
+
 class Chassis {
     public:
+        // Which side stays still during a swing turn.
         enum class DriveSide { LEFT, RIGHT };
 
     private:
+        // ---- Hardware -----------------------------------------------------
         pros::MotorGroup leftMotors;
         pros::MotorGroup rightMotors;
-        pros::Imu *imu; // optional IMU pointer (may be nullptr)
+        pros::Imu *imu; // may be nullptr - the robot still drives, just without
+                        // heading correction, turning, or odometry
 
-        PID drivePID; // gains tuned via config.hpp, see DEFAULT_DRIVE_KP/KI/KD
-        PID turnPID;
-        double headingKP; // corrects drift during drive_distance using the IMU (0 = no correction)
+        // ---- Control ------------------------------------------------------
+        PID drivePID;     // used by drive_distance()
+        PID turnPID;      // used by turn_degrees() and swing_turn()
+        double headingKP; // keeps drive_distance() going straight (0 = off)
 
-        // Optional tracking wheels for odometry (see set_tracking_wheels()).
-        // leftTrackingWheel/rightTrackingWheel are the two parallel wheels;
-        // both must be set for tracking wheels to be used at all - without
-        // them, odomLoop() falls back to the (slip-prone) drive motor
-        // encoders. backTrackingWheel is independently optional even when
-        // the parallel wheels are set: nullptr just means no strafe/lateral
-        // tracking, not a fallback to encoders.
-        pros::Rotation *leftTrackingWheel = nullptr;
-        pros::Rotation *rightTrackingWheel = nullptr;
-        pros::Rotation *backTrackingWheel = nullptr;
+        // ---- Tracking wheel -----------------------------------------------
+        // One unpowered wheel, mounted facing forward, that measures how far
+        // the robot travels. nullptr means "not installed", in which case
+        // odometry falls back to reading the drive motors' own encoders.
+        pros::Rotation *trackingWheel = nullptr;
+
+        // A pros::Rotation sensor reports its position in centidegrees
+        // (36000 per full turn). This is the conversion factor from those
+        // to inches of travel, worked out once in set_tracking_wheel().
         double trackingWheelInchesPerCentidegree = 0.0;
 
-        // Dead-reckoned odometry (inches, degrees), updated by a background
-        // task started with start_odometry(). Requires an IMU for heading -
-        // without one, start_odometry() is a no-op. (x, y) use a compass-style
-        // convention matching imu->get_rotation() directly: heading 0 = +Y
-        // axis, clockwise-positive (same direction turn_degrees(+degrees)
-        // actually turns the robot).
+        // ---- Position -----------------------------------------------------
+        // Where the robot thinks it is. Updated by the background odometry
+        // task, so everything here is shared between two tasks at once.
         double odomX = 0.0;
         double odomY = 0.0;
         double odomHeading = 0.0;
-        // odomHeading is always imu->get_rotation() + headingOffset, never the
-        // raw IMU value directly - otherwise reset_position()'s headingDeg
-        // would only "stick" until the next odomLoop() tick (~10ms later),
-        // which then overwrites it with the IMU's own unmodified reading.
+
+        // Heading is stored as (what the IMU reports) + (this offset), not
+        // as the raw IMU value. Without the offset, reset_position()'s
+        // heading would be wiped out by the next odometry update ~10ms
+        // later, which would overwrite it with the IMU's own reading.
         std::atomic<double> headingOffset{0.0};
+
+        // Guards odomX/odomY/odomHeading. Anyone reading position gets all
+        // three from the same moment in time, never a half-updated mix of
+        // an old x with a new y.
         mutable pros::Mutex odomMutex;
+
         std::atomic<bool> odomRunning{false};
         std::optional<pros::Task> odomTask;
 
+        // The background loop itself. Runs until odomRunning goes false.
         void odomLoop();
 
     public:
-        // Convenience constructors: construct from port lists.
-        // Takes a vector (not initializer_list) so callers can hand it
-        // config.hpp's std::array ports directly, whatever size they are.
+        // -------------------------------------------------------------------
+        // SETUP
+        // -------------------------------------------------------------------
+
+        // Builds a drivetrain from a list of ports per side, with an IMU.
+        //
+        //   leftPorts / rightPorts - motor ports, negative to reverse
+        //   imu                    - the inertial sensor, for turns/odometry
+        //   drivePID / turnPID     - tuning for driving and turning
+        //   headingKP              - drift correction strength (0 = off)
+        //   gearset                - motor cartridge color (see config.hpp)
         Chassis(const std::vector<std::int8_t>& leftPorts,
             const std::vector<std::int8_t>& rightPorts,
             pros::Imu *imu,
             PID drivePID,
             PID turnPID,
-            double headingKP = 0.0);
+            double headingKP = 0.0,
+            pros::v5::MotorGears gearset = pros::v5::MotorGears::blue);
 
-        // Constructor without IMU (uses imu port 0 placeholder)
+        // Same, but with no IMU. The robot can still drive forward and
+        // backward, but turn_degrees(), swing_turn(), odometry, and
+        // drive_to_point() will not work.
         Chassis(const std::vector<std::int8_t>& leftPorts,
             const std::vector<std::int8_t>& rightPorts,
             PID drivePID,
-            PID turnPID);
+            PID turnPID,
+            pros::v5::MotorGears gearset = pros::v5::MotorGears::blue);
 
-        // Stops the odometry task (if running) before the rest of the object
-        // is torn down. Without this, destroying a Chassis whose odometry
-        // task is still running would leave the background task's Task
-        // destructor to just detach it (on host builds) - a thread that
-        // outlives leftMotors/rightMotors/odomMutex and touches freed memory.
-        // Real device builds never actually destroy the global Chassis
-        // during a match, but host tests routinely construct short-lived
-        // ones, so this can't be left to caller discipline.
+        // Shuts down the background odometry task before anything else gets
+        // torn down. On a real robot the Chassis lives for the whole match
+        // and is never destroyed, but the host tests create and destroy
+        // them constantly, and a leftover background task would keep
+        // touching memory that no longer exists.
         ~Chassis();
 
-        void drive_forward(int speed, bool forward); // forward=false drives backward at the same speed
-        void drive(int leftSpeed, int rightSpeed);
-        void stop();
+        // -------------------------------------------------------------------
+        // DRIVING BY HAND (driver control)
+        // -------------------------------------------------------------------
+        // These send power straight to the motors with no feedback. Power
+        // ranges from -127 (full reverse) to 127 (full forward), and is
+        // clamped automatically so an out-of-range number is never a
+        // problem.
 
-        void drive_distance(double inches);  // straight line using drive PID (+ IMU heading correction and basic accel limiting)
-        void turn_degrees(double degrees);   // turns to angle using IMU + turn PID
-        void swing_turn(double degrees, DriveSide pivotSide); // turns using only one side, pivoting on the other (locked) side
+        void drive_forward(int speed, bool forward); // both sides together
+        void drive(int leftSpeed, int rightSpeed);   // each side separately
+        void stop();                                  // both sides to zero
 
-        bool has_fault() const; // true if any drivetrain motor is reporting an over-temp/over-current/driver fault
+        // -------------------------------------------------------------------
+        // DRIVING EXACT AMOUNTS (autonomous)
+        // -------------------------------------------------------------------
+        // These block until the robot arrives, or until the safety timeout
+        // in config.hpp runs out. They always stop the motors before
+        // returning, so after any of these the robot is guaranteed still.
 
-        // Attaches dedicated (non-powered) tracking wheels for odometry,
-        // decoupled from drive-motor wheel slip. Call once before
-        // start_odometry() - if never called, odometry falls back to the
-        // drive motor encoders. leftWheel/rightWheel are the two parallel
-        // (forward-measuring) wheels; backWheel is the perpendicular
-        // (strafe-measuring) wheel - pass nullptr for it if you don't have
-        // one (you still get slip-free forward tracking from the parallel
-        // wheels, just no lateral/strafe component). Heading still comes
-        // from the IMU either way - see the odomHeading comment above.
-        void set_tracking_wheels(pros::Rotation *leftWheel, pros::Rotation *rightWheel,
-                                  pros::Rotation *backWheel, double wheelDiameterInch);
+        // Drives straight for a distance in inches. Negative goes backward.
+        // Uses the IMU (if present) to hold a straight line, and ramps power
+        // up gradually so the wheels do not spin out.
+        void drive_distance(double inches);
 
-        // Dead-reckoned odometry. Call start_odometry() once (e.g. from
-        // initialize()) to begin tracking position; requires an IMU.
+        // Turns in place by an angle in degrees. Positive turns right
+        // (clockwise). Needs an IMU - without one this just stops the
+        // motors and returns.
+        void turn_degrees(double degrees);
+
+        // Turns by powering only ONE side while the other stays locked, so
+        // the robot pivots around the locked wheel instead of spinning in
+        // place. pivotSide is the side that stays still. Needs an IMU.
+        void swing_turn(double degrees, DriveSide pivotSide);
+
+        // -------------------------------------------------------------------
+        // HEALTH CHECK
+        // -------------------------------------------------------------------
+
+        // True if any drivetrain motor is overheating, drawing too much
+        // current, reporting a driver fault, or has been unplugged entirely.
+        bool has_fault() const;
+
+        // -------------------------------------------------------------------
+        // POSITION TRACKING
+        // -------------------------------------------------------------------
+
+        // Attaches the forward-facing tracking wheel. Call this BEFORE
+        // start_odometry(). If you never call it, or pass nullptr, odometry
+        // falls back to the drive motor encoders instead - which still
+        // works, but drifts more because powered wheels slip.
+        void set_tracking_wheel(pros::Rotation *wheel, double wheelDiameterInch);
+
+        // Starts and stops the background position-tracking task. Call
+        // start_odometry() once, normally at the end of initialize().
+        // Does nothing at all if there is no IMU.
         void start_odometry();
         void stop_odometry();
-        // Declares the robot's current (x, y, headingDeg). headingDeg is kept
-        // as an offset from the IMU's own rotation, so it persists (get_heading()
-        // will keep reporting it, adjusted as the robot turns) rather than being
-        // overwritten by the IMU's raw reading on the next odometry tick.
+
+        // Tells the robot where it currently is. Use this at the start of
+        // autonomous to declare the starting position on the field.
         void reset_position(double x = 0.0, double y = 0.0, double headingDeg = 0.0);
+
+        // Reads the current position. Safe to call from any task.
         double get_x() const;
         double get_y() const;
-        double get_heading() const; // degrees, IMU rotation convention (clockwise-positive)
+        double get_heading() const;
 
-        // Turns to face (targetX, targetY) then drives straight to it, using
-        // odometry for feedback. Requires start_odometry() to already be
-        // running (a no-op otherwise - without it there's no live position to
-        // navigate from). This is sequential point-to-point ("go to point")
-        // following, not curvature-based pure pursuit - the (x, y)
-        // convention is internally consistent with odometry, but which
-        // physical direction on the field is "+X"/"+Y" still depends on
-        // however the IMU happens to be oriented, so verify on a real robot.
+        // -------------------------------------------------------------------
+        // DRIVING TO A SPOT ON THE FIELD
+        // -------------------------------------------------------------------
+
+        // Turns to face (x, y), then drives straight to it. Requires
+        // start_odometry() to already be running, since it needs to know
+        // where the robot currently is. Does nothing if the robot is
+        // already there.
+        //
+        // This is simple "turn, then go" movement. It does not follow a
+        // smooth curve, and it will not avoid obstacles.
         void drive_to_point(double targetX, double targetY);
+
+        // Runs drive_to_point() for each spot in the list, in order.
         void follow_path(const std::vector<std::pair<double, double>>& waypoints);
 };

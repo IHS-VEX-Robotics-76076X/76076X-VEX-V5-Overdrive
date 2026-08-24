@@ -2,348 +2,281 @@
 
 #### PLEASE WORK ON THE LIBRARY
 
-#### How it works currently
+---
 
-## Overview
+## What this is
 
-This library is a PROS based control system for a tank drive VEX V5 robot.
-It gives you PID controlled driving and turning, dead reckoning odometry
-using either drive motor encoders or dedicated tracking wheels, point to
-point navigation, and a host side test suite so you can check your logic on
-your own computer before ever touching the robot.
+Code for our VEX V5 competition robot, written with PROS.
 
-### The Chassis class
+It handles driving the robot by hand during driver control, driving exact
+distances and angles by itself during autonomous, and keeping track of where
+the robot is on the field the whole time.
 
-Chassis wraps two pros::MotorGroup objects (left side and right side), an
-optional pros::Imu pointer, two PID controllers (one for driving straight,
-one for turning), and the odometry state.
+## The robot
 
-Basic movement functions
+8 motors total, plus 2 sensors.
 
-- drive_forward(speed, forward) and drive(leftSpeed, rightSpeed) send raw
-  voltage commands from -127 to 127 directly to the motors. Both are
-  clamped automatically so a bad input never gets sent straight to the
-  motors.
-- stop() sets both sides to zero.
+| Part | Motors | Cartridge | Notes |
+|---|---|---|---|
+| Drivetrain | 4 (2 per side) | Blue (600 RPM) | tank drive |
+| Cascade lift | 2 | Green (200 RPM) | move together as one |
+| Intake | 1 | Blue (600 RPM) | |
+| Arm | 1 | Green (200 RPM) | |
+| IMU (gyro) | sensor | | tells us which way we face |
+| Tracking wheel | sensor | | tells us how far we travel |
 
-Controlled movement functions
+---
 
-- drive_distance(inches) converts inches to encoder ticks using
-  TICKS_PER_INCH, which is computed from TICKS_PER_REV times GEAR_RATIO
-  divided by (WHEEL_DIAMETER_INCH times pi). It reads both motor groups'
-  average position each loop, feeds the error into the drive PID, clamps
-  the output, then ramps it using DRIVE_MAX_ACCEL_PER_LOOP so the robot
-  does not slam to full power and slip. If an IMU is attached, it also
-  applies a small proportional correction (headingKP) to hold the
-  starting heading. It bails out after DRIVE_TIMEOUT_MS if the PID never
-  settles.
-- turn_degrees(degrees) reads imu get_rotation(), which is an unbounded
-  angle (it keeps counting past 360 instead of wrapping), adds the
-  requested degrees to get a target angle, then drives the turn PID until
-  settled or until TURN_TIMEOUT_MS runs out. Without an IMU this is a no
-  op, but it still stops the motors first so the robot never keeps moving
-  from a previous command.
-- swing_turn(degrees, side) is the same idea but only powers one side.
-  The other side is commanded to zero, and since brake mode is set to
-  HOLD at construction, that side acts as a pivot point instead of
-  coasting.
+## Which file does what
 
-Fault detection
+All the code lives in the **`76076X VEX V5/`** folder. Every file path below
+is written relative to that folder, so `include/config.hpp` means
+`76076X VEX V5/include/config.hpp`.
 
-has_fault() checks get_faults_all() on both motor groups for over
-temperature, over current, or driver fault bits. It also does a
-get_position_all() call and checks errno for ENODEV, since a fully
-unplugged motor does not set any fault bit, it just fails silently on the
-next API call.
+Start here when you are looking for something.
 
-### PID controller
+### Files you will actually edit
 
-PID (in pid.h) is a standard proportional integral derivative controller.
-calculate(error, measurement) takes both the error (target minus current
-value) and the raw measurement itself, because the derivative term is
-computed from the measurement's rate of change, not the error's rate of
-change. This avoids a problem called derivative kick, where a sudden
-change in target (like calling turn_degrees right after reset()) would
-otherwise look like a huge fake velocity spike to the derivative term. The
-very first calculate() call after construction or reset() has no previous
-measurement to compare against, so it reports zero derivative that one
-time instead of guessing.
+| File | What it is for |
+|---|---|
+| **`include/config.hpp`** | **Every number about the robot.** Port numbers, motor colors, wheel sizes, PID tuning, timeouts. If you are changing hardware or tuning, you are editing this file and probably nothing else. |
+| **`src/autonomous.cpp`** | The autonomous routines. Currently placeholders that just drive forward and back. |
+| **`src/opcontrol.cpp`** | Driver control. Which joystick drives, which button runs the intake, and so on. |
 
-isSettled(error) returns true only when both the error and the derivative
-(rate of change) are small, so the robot does not report "arrived" just
-because it is passing through the target at speed.
+### The library itself
 
-integralCap limits how large the integral term can grow so it does not
-wind up out of control. settleError and settleVelocity are the thresholds
-used above. All of these are set per PID instance because a drive PID
-(error measured in thousands of ticks) and a turn PID (error measured in
-degrees) need very different numbers.
+| File | What it is for |
+|---|---|
+| **`include/chassis.hpp`** | The list of everything the drivetrain can do, with an explanation of each. **Read this first** to learn what functions are available. |
+| **`src/chassis.cpp`** | The actual code behind those functions. Driving, turning, and position tracking all live here. |
+| **`include/pid.h`** | The PID controller, which is what lets the robot hit an exact distance or angle instead of guessing. |
+| **`include/util.hpp`** and **`src/util.cpp`** | Small math helpers: clamp, deadband, sign, random. |
+| **`src/main.cpp`** | Startup. Creates all the motors and sensors, calibrates the IMU, and decides what runs when. |
 
-### Odometry
+### Support files
 
-Odometry is a background task, started with start_odometry(), that runs
-every 10 milliseconds and keeps a running (x, y, heading) position
-estimate using dead reckoning. It needs an IMU for heading, so
-start_odometry() does nothing if no IMU was given.
+| File | What it is for |
+|---|---|
+| `include/host/pros_mock.hpp` | A fake version of the VEX API so tests can run on a laptop with no robot attached. |
+| `tests/test_chassis.cpp` | Tests for driving, turning, and position tracking. |
+| `tests/test_pid.cpp` | Tests for the PID math. |
+| `tests/test_util.cpp` | Tests for the helper functions. |
+| `Makefile` | Build settings. |
+| `include/pros/`, `include/liblvgl/` | The PROS library itself. Do not edit these. |
 
-Two ways to measure movement
+---
 
-- Dedicated tracking wheels (pros::Rotation sensors) if you call
-  set_tracking_wheels() first. These are unpowered wheels that just spin
-  freely, so they are not affected by wheel slip the way a powered drive
-  wheel is. Their readings come back in centidegrees, so the library
-  converts using wheelDiameterInch times pi divided by 36000 to get
-  inches per centidegree.
-- If you do not have tracking wheels, it falls back to averaging the
-  drive motor's own encoder positions. This works, but is more prone to
-  drift if the wheels ever slip.
+## What runs when
 
-A third optional back tracking wheel, mounted sideways, can measure left
-and right drift (strafe) that the two forward wheels cannot see at all.
+The V5 brain calls these automatically, in this order:
 
-Coordinate system
+1. **`initialize()`** in `main.cpp` runs once at power-on. Calibrates the IMU (takes about 2 seconds), sets brake modes, and starts position tracking.
+2. **`competition_initialize()`** in `main.cpp` runs while waiting for the match. Left and right LCD buttons pick which autonomous routine to use.
+3. **`autonomous()`** in `main.cpp` runs the chosen routine from `autonomous.cpp`. 15 seconds, nobody driving.
+4. **`opcontrol()`** in `opcontrol.cpp` runs for the rest of the match. Loops forever reading the controller.
 
-Heading 0 points along the positive Y axis and increases clockwise,
-matching imu get_rotation() directly. This is not the usual math
-convention (0 along positive X, counter clockwise positive), so the
-position update uses sin and cos in a swapped pattern to stay consistent.
-Each tick, forward and strafe movement gets rotated by the current
-heading and added into odomX and odomY.
+---
 
-Reliability details
+## How the robot knows where it is
 
-- Before integrating any reading, the library checks it is not PROS_ERR
-  (from a disconnected Rotation sensor) or non finite (from a
-  disconnected drive motor, which reports PROS_ERR_F, meaning infinity).
-  A bad reading is skipped for that tick instead of being added to the
-  position, so a temporary disconnect does not permanently corrupt the
-  position forever.
-- The very first baseline reading is also validated this way (not just
-  later ticks), so a sensor that happens to be disconnected at the exact
-  moment start_odometry() runs cannot poison the starting baseline
-  either.
-- odomX, odomY, and odomHeading are all read and written behind a mutex,
-  so a caller reading position from another task never sees a half
-  updated set of values.
-- reset_position(x, y, headingDeg) stores the difference between your
-  declared heading and the IMU's raw reading in a separate offset
-  variable, so the heading you set actually sticks instead of getting
-  overwritten by the IMU's own number on the next tick.
+The robot keeps a running guess of its position, updated 100 times a second
+in the background. This is called odometry. It needs two things:
 
-### Point to point driving
+- **How far it moved** comes from the tracking wheel. This is a small wheel
+  that no motor drives. It just rolls along and reports how far it spun.
+  Why not use the drive motors? Because a powered wheel can spin without the
+  robot moving. It slips when you accelerate hard or hit something. A
+  free-spinning wheel does not lie.
+- **Which way it faces** comes from the IMU.
 
-drive_to_point(x, y) reads the current odometry snapshot, computes the
-straight line distance and bearing to the target using atan2(dx, dy)
-(matching the same coordinate convention as above), then calls
-turn_degrees() followed by drive_distance(). If the target is less than
-half an inch away, it does nothing instead of turning toward a
-meaningless bearing. This requires start_odometry() to already be
-running, otherwise it is a no op since there is no live position to
-navigate from. follow_path() just calls drive_to_point() once per
-waypoint in order. This is simple sequential point to point movement, not
-a curve based path follower.
+Combine those every few milliseconds and you can add up the robot's path
+step by step.
 
-### Testing without a robot
+If the tracking wheel is not plugged in, the code automatically falls back to
+reading the drive motors instead. Position tracking still works, it just
+drifts more over a match.
 
-The include/host folder contains a mock version of the PROS API, so the
-whole Chassis, PID, and util logic can be compiled and run on your own
-computer with a normal C++ compiler, no VEX hardware or ARM toolchain
-required. Running
+**Odometry needs the IMU.** Without one, `start_odometry()` does nothing at all.
 
-```bash
-make HOST_BUILD=1
+### Directions
+
+Position is `(x, y)` in inches, heading is in degrees.
+
+- Heading `0` means facing along `+Y`
+- Heading `90` means facing along `+X`
+- Turning right (clockwise) makes the heading go **up**
+
+This is compass style, like a real compass where north is 0 and east is 90.
+It is not the convention from math class, where 0 points along `+X` and
+angles increase counter-clockwise. We use compass style because it matches
+what the IMU reports directly, so nothing has to be converted.
+
+Which physical corner of the field counts as `+X` depends on how the IMU is
+mounted and where the robot starts. Check this on the real robot before
+trusting it in a match.
+
+---
+
+## Using the chassis
+
+Everything below is a method on `myRobot`, which is created in `main.cpp`.
+
+### Driving by hand
+
+Power ranges from `-127` (full reverse) to `127` (full forward). Out of range
+numbers are clamped automatically.
+
+```cpp
+myRobot.drive(leftPower, rightPower);   // each side separately
+myRobot.drive_forward(power, forward);  // both sides together
+myRobot.stop();
 ```
 
-builds and runs three test binaries, one for chassis logic, one for the
-small util helpers, and one for the PID math specifically. This same
-command runs automatically on every push and pull request through GitHub
-Actions, so a broken change gets caught before it reaches the robot.
+### Driving exact amounts
 
-### Configuration
+These block until the robot arrives, then stop the motors.
 
-Everything you would normally tune lives in config.hpp instead of being
-scattered through the code. This includes motor ports, wheel diameter,
-gear ratio, tracking wheel ports and diameter, all PID gains and
-tolerances, both safety timeouts, the heading correction gain, the drive
-mode (arcade or tank), and the acceleration limit used in drive_distance.
+```cpp
+myRobot.drive_distance(24);                          // 24 inches forward
+myRobot.drive_distance(-12);                         // 12 inches backward
+myRobot.turn_degrees(90);                            // 90 degrees right
+myRobot.swing_turn(45, Chassis::DriveSide::LEFT);    // pivot on left wheels
+```
 
-## Building for the robot
+If one of these never reaches its target, because something jammed or a motor
+stalled or a PID gain is wrong, it gives up after the timeout in `config.hpp`
+instead of freezing for the rest of the match.
 
-- Install the PROS toolchain and CLI per the [PROS documentation](https://pros.cs.purdue.edu/).
-- Ensure `arm-none-eabi-gcc` and Newlib headers are on your `PATH`.
-- From the project root run:
+### Position
+
+```cpp
+myRobot.reset_position(0, 0, 0);   // declare where you are starting
+double x = myRobot.get_x();
+double y = myRobot.get_y();
+double h = myRobot.get_heading();
+```
+
+### Driving to a spot
+
+```cpp
+myRobot.drive_to_point(24, 36);                    // turn to face it, then go
+myRobot.follow_path({{24, 0}, {24, 24}, {0, 24}}); // several spots in order
+```
+
+Both need `start_odometry()` to already be running, since they need to know
+where the robot currently is. This is simple "turn, then go" movement. It
+does not follow smooth curves and it will not avoid obstacles.
+
+---
+
+## Controls
+
+| Input | Does |
+|---|---|
+| Left stick | Drive. Forward to move, sideways to turn. |
+| L1 / L2 | Cascade lift up / down |
+| R1 / R2 | Arm up / down |
+| X | Intake |
+| LCD left / right | Pick the autonomous routine (before the match) |
+| LCD center | Toggle the status readout on the brain screen |
+
+Driver control is single-stick arcade by default. To switch to two-stick tank,
+change `DEFAULT_DRIVE_MODE` in `config.hpp`.
+
+---
+
+## Building
+
+Both commands below have to be run from inside the project folder, not from
+the top of the repo. Get there first:
+
+```bash
+cd "76076X VEX V5"
+```
+
+### Onto the robot
 
 ```bash
 pros make
 ```
 
-### Common pitfalls on macOS
+You need the PROS toolchain installed, with `arm-none-eabi-gcc` on your
+`PATH`. See the [PROS docs](https://pros.cs.purdue.edu/).
 
-If `make` fails complaining about missing `stdint.h` or other headers, ensure
-an arm-none-eabi toolchain with newlib is installed:
+If the build fails complaining about a missing `stdint.h` or similar, your
+ARM toolchain is incomplete. On macOS:
 
 ```bash
 brew tap ArmMbed/homebrew-formulae
 brew install arm-none-eabi-gcc
 ```
 
-## Building and running the host tests
-
-`tests/test_chassis.cpp`, `tests/test_util.cpp`, and `tests/test_pid.cpp`
-exercise the `Chassis`/`PID`/`util::` logic on your own machine (no robot
-required, no ARM toolchain needed) against a mock PROS API in
-`include/host/`:
+### Testing on your laptop, with no robot
 
 ```bash
 make HOST_BUILD=1
 ```
 
-This builds `bin/host_test_chassis`, `bin/host_test_util`, and
-`bin/host_test_pid`, and runs all three. It's a separate path from the
-normal ARM device build (see `Makefile`) -
-`HOST_BUILD=1` compiles with your system's own `g++` instead of
-cross-compiling for the V5 brain, since the host tests link and run right
-here rather than getting uploaded to a robot. This is exactly what CI runs
-on every push/PR (see `.github/workflows/host-tests.yml`). To add a new host
-test, drop `tests/test_<name>.cpp` in place and add a build rule for it in
-the `Makefile` (copy an existing `*_TEST_BIN` pair and rename).
+This compiles the chassis, PID, and helper code against a fake VEX API
+(`include/host/pros_mock.hpp`) using your computer's normal C++ compiler, then
+runs all the tests. No robot and no ARM toolchain needed.
 
-## Chassis API
+Use this before uploading anything. It catches broken math and logic errors
+in seconds instead of during a match. GitHub also runs it automatically on
+every push and pull request.
 
-`Chassis` (`include/chassis.hpp`) wraps a two-side (left/right) tank
-drivetrain plus an optional IMU:
+To add a new test file, drop `tests/test_<name>.cpp` in place and copy an
+existing `*_TEST_BIN` pair in the `Makefile`.
 
-- `drive(leftSpeed, rightSpeed)` / `drive_forward(speed, forward)` / `stop()` -
-  direct, unregulated motor control (used by opcontrol).
-- `drive_distance(inches)` - drives straight using the drive `PID`, both
-  sides' encoders (averaged), IMU heading-hold correction, and a basic
-  accel-limited (motion-profiled) ramp. Requires an IMU for heading
-  correction, but works without one (just skips the correction).
-- `turn_degrees(degrees)` - point turn to a relative angle using the IMU and
-  turn `PID`. No-op without an IMU.
-- `swing_turn(degrees, Chassis::DriveSide::LEFT|RIGHT)` - turns by driving
-  only one side, pivoting on the other (locked) side.
-- `has_fault()` - true if any drivetrain motor is reporting an over-temp/
-  over-current/driver fault (see `pros::MotorGroup::get_faults_all()`), *or*
-  if a motor has been fully disconnected (`errno == ENODEV` on the next API
-  call - the fault bitfield alone doesn't cover a literally unplugged motor).
-
-All of `drive_distance`/`turn_degrees`/`swing_turn` bail out after
-`DRIVE_TIMEOUT_MS`/`TURN_TIMEOUT_MS` (`config.hpp`) instead of hanging
-forever if the PID never settles (stall, jam, bad gains).
-
-### Odometry and point-to-point driving
-
-- `set_tracking_wheels(leftWheel, rightWheel, backWheel, wheelDiameterInch)` -
-  attaches dedicated, non-powered `pros::Rotation` tracking wheels for
-  odometry, so position tracking isn't thrown off by drive-motor wheel slip
-  the way reading the drive encoders is. Call **before** `start_odometry()`.
-  `leftWheel`/`rightWheel` are the two parallel (forward-measuring) wheels -
-  both must be set for tracking wheels to be used at all, or odometry falls
-  back to the drive motor encoders. `backWheel` (perpendicular,
-  strafe-measuring) is independently optional - pass `nullptr` if you don't
-  have one; you still get slip-free forward tracking, just no lateral/strafe
-  component (which encoder-only or two-forward-wheel-only odometry can't
-  measure at all - useful for catching drift from collisions or scrub during
-  turns).
-- `start_odometry()` / `stop_odometry()` - spawns/stops a background task
-  that dead-reckons `(x, y, heading)` in inches/degrees, from tracking wheels
-  if attached or the drivetrain encoders otherwise, plus the IMU for heading
-  either way. **Requires an IMU** - `start_odometry()` is a no-op without
-  one. Call once, typically from `initialize()`.
-- `get_x()` / `get_y()` / `get_heading()` / `reset_position(x, y, headingDeg)`.
-  Uses a compass-style convention matching `imu->get_rotation()` directly:
-  heading 0 = +Y axis, clockwise-positive (the same direction
-  `turn_degrees(+degrees)` actually turns the robot) - not the standard math
-  convention (0 = +X axis, counter-clockwise-positive).
-- `drive_to_point(x, y)` - turns to face `(x, y)` then drives straight to it,
-  using odometry feedback. This is sequential point-to-point ("go to point")
-  following, **not** curvature-based pure pursuit.
-- `follow_path({{x1,y1}, {x2,y2}, ...})` - calls `drive_to_point` for each
-  waypoint in order.
-
-`drive_to_point`'s bearing math is internally consistent with odometry (both
-use the same convention above), but which physical direction on the field
-counts as "+X"/"+Y" still depends on how the IMU happens to be mounted/
-oriented - verify on-robot before relying on it in a match.
-
-## PID
-
-`PID` (`include/pid.h`) is a standard kP/kI/kD controller. `integralCap`,
-`settleError`, and `settleVelocity` are constructor parameters (not shared
-globals) because a drive PID (error in encoder ticks, can be thousands) and a
-turn PID (error in degrees, 0-180) need very different scales -
-`config.hpp`'s `DEFAULT_DRIVE_*`/`DEFAULT_TURN_*` constants set sane defaults
-for each. `isSettled()` requires both the error and its rate of change to be
-small, so a fast pass through the target isn't mistaken for having arrived.
-
-`calculate(error, measurement)` takes the raw process variable
-(`measurement`) in addition to `error`, not just `error` alone - the
-derivative term is computed on the measurement's rate of change, not the
-error's ("derivative-on-measurement"), so a step change in the target alone
-(e.g. calling `turn_degrees()` right after `reset()`) can't be misread as a
-huge, fake rate of change and spike the output. Call `reset()` between
-movements so the old integral/derivative state doesn't bleed into the next
-one.
-
-## Configuration (`include/config.hpp`)
-
-All of the following live in one place - change them there, not at the call
-sites in `main.cpp`:
-
-- `WHEEL_DIAMETER_INCH`, `GEAR_RATIO`, `TICKS_PER_REV` - drivetrain geometry.
-- `LEFT_DRIVE_PORTS` / `RIGHT_DRIVE_PORTS` - drivetrain motor ports.
-- `CASCADE_MOTOR_PORT` / `INTAKE_MOTOR_PORT` / `ARM_TURN_MOTOR_PORT` /
-  `CLAMP_MOTOR_PORT` / `INERTIAL_SENSOR_PORT` - mechanism/sensor ports.
-- `LEFT_TRACKING_WHEEL_PORT` / `RIGHT_TRACKING_WHEEL_PORT` /
-  `BACK_TRACKING_WHEEL_PORT` / `TRACKING_WHEEL_DIAMETER_INCH` - tracking
-  wheel odometry ports/geometry (see `Chassis::set_tracking_wheels()` above).
-- `DEFAULT_DRIVE_MODE` (`DriveMode::ARCADE` or `::TANK`) - opcontrol stick
-  layout. ARCADE is single-stick (left Y forward, left X turn); TANK is two
-  sticks (left Y / right Y per side). This is a tank drivetrain, not
-  mecanum, so "arcade" here still means turning, not strafing.
-- `DEFAULT_DRIVE_KP/KI/KD`, `DEFAULT_TURN_KP/KI/KD` - PID gains.
-- `DEFAULT_DRIVE_INTEGRAL_CAP/SETTLE_ERROR/SETTLE_VELOCITY`,
-  `DEFAULT_TURN_INTEGRAL_CAP/SETTLE_ERROR/SETTLE_VELOCITY` - PID tolerances.
-- `DRIVE_TIMEOUT_MS` / `TURN_TIMEOUT_MS` - safety timeouts.
-- `DEFAULT_HEADING_KP` - heading-hold correction gain for `drive_distance`.
-- `DRIVE_MAX_ACCEL_PER_LOOP` - motion-profiling accel limit for `drive_distance`.
-
-## On the LCD
-
-- **Left/right buttons** (during `competition_initialize`, i.e. before a
-  match starts): pick the autonomous routine (red close side / blue far
-  side). Shown on line 3.
-- **Center button**: toggles a live status readout on line 2 - robot battery
-  %, controller connection, and any motor faults.
+---
 
 ## Known limitations
 
-- `follow_path`/`drive_to_point` are basic go-to-point following, not a true
-  curvature-based pure pursuit path follower.
-- Odometry and `drive_to_point` require an IMU; there's no encoder-only
-  (differential-drive) heading fallback - tracking wheels replace the
-  drivetrain encoders for translation, not the IMU for heading.
-- No holonomic/mecanum drivetrain support - this is a tank/differential
-  drivetrain library throughout (opcontrol mixing, odometry kinematics, and
-  `drive`/`drive_forward` all assume it).
+- `drive_to_point` and `follow_path` turn and then drive straight. They do not
+  follow smooth curves.
+- Odometry and `drive_to_point` need the IMU. There is no fallback if it is
+  missing or broken.
+- Tank drive only. The robot cannot slide sideways, and the code assumes that
+  everywhere.
+- Only one tracking wheel, facing forward, so sideways drift cannot be
+  detected. If the robot gets shoved sideways, odometry will not notice.
 
-#### Pending tasks
+---
 
-### Software to do list:
-1. strenghten the library and/or check for bugs
-2. organize folders(maybe?)
+## Still to do
 
-### Hardware to do list:
-1. Drivetrain motor ports/wheel geometry: `config.hpp`, `LEFT_DRIVE_PORTS`, `RIGHT_DRIVE_PORTS`, `WHEEL_DIAMETER_INCH`, `GEAR_RATIO`, `TICKS_PER_REV`
-2. Mechanism motor ports: `config.hpp`, `CASCADE_MOTOR_PORT`, `INTAKE_MOTOR_PORT`, `ARM_TURN_MOTOR_PORT`, `CLAMP_MOTOR_PORT`
-3. IMU port: `config.hpp`, `INERTIAL_SENSOR_PORT`
-4. Tracking wheel ports/diameter: `config.hpp`, `LEFT_TRACKING_WHEEL_PORT`, `RIGHT_TRACKING_WHEEL_PORT`, `BACK_TRACKING_WHEEL_PORT`, `TRACKING_WHEEL_DIAMETER_INCH` (still placeholder values; remove the back wheel wiring in `main.cpp`/`set_tracking_wheels()` if you don't have one)
-5. PID gains and tolerances: `config.hpp`, `DEFAULT_DRIVE_KP/KI/KD`, `DEFAULT_TURN_KP/KI/KD`, `DEFAULT_DRIVE_INTEGRAL_CAP/SETTLE_ERROR/SETTLE_VELOCITY`, `DEFAULT_TURN_*` equivalents, `DEFAULT_HEADING_KP`, `DRIVE_MAX_ACCEL_PER_LOOP`, all currently generic placeholder values, need tuning on the real robot
-6. Safety timeouts: `config.hpp`, `DRIVE_TIMEOUT_MS`, `TURN_TIMEOUT_MS` (defaults are reasonable but worth revisiting once real movement speeds are known)
-7. Drive mode / control scheme: `config.hpp`, `DEFAULT_DRIVE_MODE` (arcade vs. tank, a driver preference, not yet decided)
-8. Real autonomous routines: `src/autonomous.cpp`, `red_close_side()` and `blue_far_side()` are explicit placeholders (drive forward/backward 1 second), need the actual game-strategy routines once decided
-9. Opcontrol button mapping for mechanisms: `src/opcontrol.cpp`, cascade/arm/clamp/intake button bindings are a reasonable guess but should be confirmed against actual driver preference/game mechanism design
-10. No mecanum/holonomic support: entire library (`chassis.hpp`/`chassis.cpp`, `opcontrol.cpp`), tank drive only by design, would need new hardware plus a rewrite if the robot ever goes holonomic
-11. No pneumatics/additional-sensor support (e.g. distance, optical, vision): not present anywhere, add if/when that hardware is added
-12. Local ARM toolchain: your machine's `arm-none-eabi-gcc` install is missing newlib headers, so `pros make`/device builds currently fail before even reaching this repo's code, fix is in `README.md`'s "Common pitfalls on macOS" section (`brew install arm-none-eabi-gcc`), this is a machine setup issue, not a code change
+### Already settled
+
+No need to revisit these.
+
+- Motor layout: 4 drivetrain, 2 cascade, 1 intake, 1 arm
+- Gear cartridges: blue drivetrain and intake, green cascade and arm
+- One forward-facing tracking wheel for odometry
+- `TICKS_PER_REV` is derived from the cartridge color automatically, so it can never fall out of sync
+
+### Needs the real robot
+
+Everything here is a placeholder guess until someone measures it.
+
+1. **Port numbers** in `config.hpp`: `LEFT_DRIVE_PORTS`, `RIGHT_DRIVE_PORTS`, `CASCADE_MOTOR_PORTS`, `INTAKE_MOTOR_PORT`, `ARM_MOTOR_PORT`, `INERTIAL_SENSOR_PORT`, `TRACKING_WHEEL_PORT`
+2. **Wheel sizes and gearing** in `config.hpp`: `WHEEL_DIAMETER_INCH`, `GEAR_RATIO`, `TRACKING_WHEEL_DIAMETER_INCH`
+3. **PID tuning** in `config.hpp`. This is the biggest job and it can only be done by driving the real robot: all the `DEFAULT_DRIVE_*` and `DEFAULT_TURN_*` gains, plus `DEFAULT_HEADING_KP` and `DRIVE_MAX_ACCEL_PER_LOOP`
+4. **Timeouts** in `config.hpp`, once real speeds are known: `DRIVE_TIMEOUT_MS`, `TURN_TIMEOUT_MS`
+5. **Check which way each motor spins.** Put a negative sign on the port if a motor runs backwards. Get this wrong and the robot fights itself or drives backwards.
+6. **Confirm the field directions.** Which corner counts as `+X` depends on how the IMU is mounted. Verify before trusting `drive_to_point` in a match.
+
+### Needs a team decision
+
+1. **Real autonomous routines** in `src/autonomous.cpp`. Currently placeholders that drive forward and back for one second. Needs the game strategy first.
+2. **Drive mode** in `config.hpp`: `DEFAULT_DRIVE_MODE`, arcade or tank. Ask whoever is driving.
+3. **Button mapping** in `src/opcontrol.cpp`. The current layout is a reasonable guess, not a decision.
+
+### Software
+
+1. Strengthen the library and keep checking for bugs
+2. Organize folders (maybe?)
+3. No pneumatics or extra sensors (distance, optical, vision) are wired up. Add if that hardware goes on the robot.
+
+### Your computer, not the code
+
+1. The `arm-none-eabi-gcc` install on the Mac used for this is missing its newlib headers, so `pros make` fails before it even reaches our code. Fix is under [Building](#onto-the-robot) above. `make HOST_BUILD=1` still works fine.

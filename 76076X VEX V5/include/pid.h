@@ -2,15 +2,43 @@
 
 #include <cmath>
 
-// pid controller - plug in kP, kI, kD and call calculate() each loop
-// higher kP = snappier but more oscillation prolly
-// kI fixes leftover error (keep this pretty small usually)
-// kD dampens the overshoot
+// ===========================================================================
+//                            PID CONTROLLER
+// ===========================================================================
 //
-// integralCap, settleError and settleVelocity are per-instance because a
-// drive PID (error measured in encoder ticks, can be thousands) and a turn
-// PID (error measured in degrees, 0-180) operate on completely different
-// scales and can't share one set of tuned values.
+// A PID controller answers one question, over and over: "I want to be HERE,
+// I am actually THERE, how hard should I push?"
+//
+// Without it, driving 24 inches would mean guessing at a motor power and a
+// duration and hoping. With it, the robot measures how far off it still is
+// and adjusts continuously until it arrives.
+//
+// The name comes from the three parts that get added together:
+//
+//   P - Proportional. Push harder the further away you are. This does most
+//       of the work. Too much and the robot overshoots and wobbles.
+//
+//   I - Integral. If the robot stalls just short of the target, error keeps
+//       piling up and this slowly grows to break through. Keep it tiny, or
+//       zero, or it winds up and causes wild overshoot.
+//
+//   D - Derivative. Pushes back against fast movement, like a shock
+//       absorber, so the robot eases into the target instead of bouncing
+//       around it.
+//
+// HOW TO USE ONE
+//
+//   pid.reset();                          before starting a new movement
+//   output = pid.calculate(error, where); every loop, feed it the numbers
+//   if (pid.isSettled(error)) break;      stop once it has arrived
+//
+// WHY THE TOLERANCES ARE PER-CONTROLLER
+//
+// integralCap, settleError, and settleVelocity are set per PID object
+// rather than shared globally, because driving and turning work on wildly
+// different scales. Drive error is in encoder ticks and can be in the
+// thousands. Turn error is in degrees and never exceeds 180. One set of
+// numbers cannot possibly suit both.
 
 class PID {
     public:
