@@ -31,6 +31,32 @@
 
 namespace pros {
 
+// Mirrors the real pros::v5::MotorGears (include/pros/abstract_motor.hpp),
+// including its `inline namespace v5` wrapper, so both `pros::MotorGears`
+// and `pros::v5::MotorGears` resolve the same way they do on device. The
+// mock has no motor dynamics to simulate, so the value is stored and
+// readable but doesn't change how the fake motors behave - config.hpp uses
+// it to pick TICKS_PER_REV, and that math is what the host tests exercise.
+inline namespace v5 {
+enum class MotorGears {
+    ratio_36_to_1 = 0,
+    red = ratio_36_to_1,
+    rpm_100 = ratio_36_to_1,
+    ratio_18_to_1 = 1,
+    green = ratio_18_to_1,
+    rpm_200 = ratio_18_to_1,
+    ratio_6_to_1 = 2,
+    blue = ratio_6_to_1,
+    rpm_600 = ratio_6_to_1,
+    invalid = INT32_MAX
+};
+
+using MotorGearset = MotorGears;
+using MotorCart = MotorGears;
+using MotorCartridge = MotorGears;
+using MotorGear = MotorGears;
+} // inline namespace v5
+
 using std::string;
 
 inline long long millis() {
@@ -113,8 +139,9 @@ inline bool host_get_controller_digital(int button);
 
 class Motor {
     public:
-        Motor() : port(-1), position(0), voltage(0) {}
-        Motor(int port) : port(port), position(0), voltage(0) {}
+        Motor() : port(-1), position(0), voltage(0), gearset(MotorGears::invalid) {}
+        Motor(int port, MotorGears gearset = MotorGears::invalid)
+            : port(port), position(0), voltage(0), gearset(gearset) {}
         void move(int v) { voltage = v; position += v * 0.1; }
         void move_voltage(int v) { move(v); }
         double get_position() const { return position; }
@@ -125,21 +152,28 @@ class Motor {
         void set_brake_mode(int mode) { /* no motor dynamics to brake in the host mock */ }
         std::uint32_t get_faults() const { return 0; }
         int get_port() const { return port; } // matches real pros::Motor/Device::get_port()
+        MotorGears get_gearing() const { return gearset; }
+        std::int32_t set_gearing(MotorGears g) { gearset = g; return 1; }
     private:
         int port;
         double position;
         int voltage;
+        MotorGears gearset;
 };
 
 class MotorGroup {
     public:
-        MotorGroup(std::initializer_list<std::int8_t> ports) {
+        MotorGroup(std::initializer_list<std::int8_t> ports,
+                   MotorGears gearset = MotorGears::invalid)
+            : gearset_(gearset) {
             for (auto p : ports) {
                 ports_.push_back(static_cast<int>(p));
                 if (!has_motor(static_cast<int>(p))) create_motor(static_cast<int>(p));
             }
         }
-        MotorGroup(const std::vector<std::int8_t>& ports) {
+        MotorGroup(const std::vector<std::int8_t>& ports,
+                   MotorGears gearset = MotorGears::invalid)
+            : gearset_(gearset) {
             for (auto p : ports) {
                 ports_.push_back(static_cast<int>(p));
                 if (!has_motor(static_cast<int>(p))) create_motor(static_cast<int>(p));
@@ -165,8 +199,13 @@ class MotorGroup {
         std::vector<std::uint32_t> get_faults_all() const {
             return std::vector<std::uint32_t>(ports_.size(), 0);
         }
+        std::vector<MotorGears> get_gearing_all() const {
+            return std::vector<MotorGears>(ports_.size(), gearset_);
+        }
+        std::int32_t set_gearing_all(MotorGears g) { gearset_ = g; return 1; }
     private:
         std::vector<int> ports_;
+        MotorGears gearset_ = MotorGears::invalid;
 };
 
 class Imu {

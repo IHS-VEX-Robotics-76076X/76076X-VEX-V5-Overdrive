@@ -14,26 +14,31 @@
 Chassis::Chassis(const std::vector<std::int8_t>& leftPorts,
                                  const std::vector<std::int8_t>& rightPorts,
                                  pros::Imu *imu,
-                                 PID drivePID, PID turnPID, double headingKP)
-        : leftMotors(leftPorts), rightMotors(rightPorts), imu(imu),
+                                 PID drivePID, PID turnPID, double headingKP,
+                                 pros::v5::MotorGears gearset)
+        : leftMotors(leftPorts, gearset), rightMotors(rightPorts, gearset), imu(imu),
             drivePID(drivePID), turnPID(turnPID), headingKP(headingKP) {
-    // An empty side would silently divide-by-zero (0.0/0) into NaN every
-    // time drive_distance()/odomLoop() average that side's encoder
-    // positions, and NaN propagates forever from there (PID error, output,
-    // odometry position all go NaN with no crash or error to point at the
-    // real cause). Catch the misconfiguration here instead, at the one
-    // place it can be checked for both constructors, rather than as a
-    // mystery halfway through a match.
+    // A side with no motors would divide by zero (0.0 / 0) every time
+    // drive_distance() or the odometry loop averages that side's encoder
+    // readings. That produces NaN, and NaN spreads: it poisons the PID
+    // error, the motor output, and the tracked position, all without
+    // crashing or printing anything. The robot would just quietly stop
+    // working halfway through a match with no clue why. Catch it here at
+    // startup instead.
     assert(!leftPorts.empty() && !rightPorts.empty() &&
            "Chassis: leftPorts/rightPorts must not be empty - check LEFT_DRIVE_PORTS/RIGHT_DRIVE_PORTS in config.hpp");
+
+    // HOLD makes a stopped motor actively resist being pushed, instead of
+    // coasting. swing_turn() relies on this to keep the pivot side planted.
     leftMotors.set_brake_mode_all(E_MOTOR_BRAKE_HOLD);
     rightMotors.set_brake_mode_all(E_MOTOR_BRAKE_HOLD);
 }
 
 Chassis::Chassis(const std::vector<std::int8_t>& leftPorts,
                                  const std::vector<std::int8_t>& rightPorts,
-                                 PID drivePID, PID turnPID)
-        : leftMotors(leftPorts), rightMotors(rightPorts), imu(nullptr),
+                                 PID drivePID, PID turnPID,
+                                 pros::v5::MotorGears gearset)
+        : leftMotors(leftPorts, gearset), rightMotors(rightPorts, gearset), imu(nullptr),
             drivePID(drivePID), turnPID(turnPID), headingKP(0.0) {
     assert(!leftPorts.empty() && !rightPorts.empty() &&
            "Chassis: leftPorts/rightPorts must not be empty - check LEFT_DRIVE_PORTS/RIGHT_DRIVE_PORTS in config.hpp");
@@ -218,123 +223,111 @@ void Chassis::swing_turn(double degrees, DriveSide pivotSide) {
     stop();
 }
 
-// --- Odometry -------------------------------------------------------------
+// ===========================================================================
+//                          POSITION TRACKING
+// ===========================================================================
 
-void Chassis::set_tracking_wheels(pros::Rotation *leftWheel, pros::Rotation *rightWheel,
-                                   pros::Rotation *backWheel, double wheelDiameterInch) {
-    leftTrackingWheel = leftWheel;
-    rightTrackingWheel = rightWheel;
-    backTrackingWheel = backWheel;
+void Chassis::set_tracking_wheel(pros::Rotation *wheel, double wheelDiameterInch) {
+    trackingWheel = wheel;
+
+    // A pros::Rotation sensor counts in centidegrees: 36000 of them per full
+    // turn of the wheel. One full turn moves the robot one circumference,
+    // which is (diameter * pi) inches. So each centidegree is worth:
+    //
+    //     (diameter * pi) / 36000  inches
+    //
+    // Working this out once here keeps it out of the loop below.
     trackingWheelInchesPerCentidegree = (wheelDiameterInch * M_PI) / 36000.0;
 }
 
 void Chassis::odomLoop() {
-    // Both parallel wheels must be attached to use tracking wheels at all;
-    // the back wheel is independently optional (checked separately below).
-    bool useTrackingWheels = (leftTrackingWheel != nullptr && rightTrackingWheel != nullptr);
+    // Prefer the tracking wheel when one is installed. It is unpowered, so
+    // it cannot spin uselessly the way a driven wheel does when it slips.
+    const bool useTrackingWheel = (trackingWheel != nullptr);
 
-    // Baseline for computing deltas, seeded lazily by the first VALID
-    // reading rather than unconditionally before the loop starts. Seeding
-    // from a disconnected sensor's sentinel value (PROS_ERR/PROS_ERR_F)
-    // would corrupt every delta computed against it from then on
-    // ((freshReading - corruptedBaseline) is still garbage) even with the
-    // per-tick validation below - that validation only protects the CURRENT
-    // reading, not a baseline that was already bad when it was captured. A
-    // sensor being disconnected at the exact moment start_odometry() runs
-    // (e.g. a loose wire at boot) is exactly the scenario that needs this.
+    // To work out how far we moved, we compare this tick's sensor reading
+    // against last tick's. That means we need a starting reading to compare
+    // against - a "baseline".
+    //
+    // The baseline is set from the first GOOD reading, not simply the first
+    // reading. If a sensor happens to be unplugged at the exact moment
+    // odometry starts (a loose wire at boot, say), its reading is a garbage
+    // error value. Storing that as the baseline would corrupt every single
+    // distance we calculate afterward, because every later reading gets
+    // compared against garbage. Waiting for a good reading avoids that.
     bool seeded = false;
-    bool backSeeded = false;
-    double prevLeft = 0.0, prevRight = 0.0, prevBack = 0.0;
+    double prevReading = 0.0;
 
     while (odomRunning) {
-        // deltaForward: distance traveled straight ahead this tick.
-        // deltaStrafe: sideways (local +X = robot's right) distance this
-        // tick - only ever nonzero with a back tracking wheel attached;
-        // there's no way to measure lateral drift from drive-motor encoders
-        // or a single pair of forward-facing wheels at all.
+        // How far the robot moved forward since the last tick, in inches.
+        // Stays 0 if this tick's sensor reading was unusable.
         double deltaForward = 0.0;
-        double deltaStrafe = 0.0;
 
-        if (useTrackingWheels) {
-            // A disconnected/faulted Rotation sensor returns PROS_ERR (a huge
-            // sentinel, not a small or zero value) instead of a real reading.
-            // Integrating that directly would inject a multi-thousand-inch
-            // spurious jump into position that can never be undone - once
-            // odomX/odomY holds garbage, "+= anything finite" never fixes it.
-            // Skip this tick's contribution instead: movement during the
-            // disconnection is lost, but that's far better than permanently
-            // wrecking the whole position estimate.
-            std::int32_t leftRaw = leftTrackingWheel->get_position();
-            std::int32_t rightRaw = rightTrackingWheel->get_position();
+        if (useTrackingWheel) {
+            // An unplugged or broken Rotation sensor does not return a small
+            // or zero value - it returns PROS_ERR, a huge error code. Adding
+            // that to our position would fling the robot thousands of inches
+            // across the field in one tick, and there is no way to undo it
+            // afterward. So we throw the reading away instead. We lose
+            // whatever movement happened during the disconnection, which is
+            // far better than corrupting the position permanently.
+            std::int32_t raw = trackingWheel->get_position();
 
-            if (leftRaw != PROS_ERR && rightRaw != PROS_ERR) {
-                double left = leftRaw;
-                double right = rightRaw;
+            if (raw != PROS_ERR) {
+                double reading = raw;
                 if (seeded) {
-                    double deltaLeftIn = (left - prevLeft) * trackingWheelInchesPerCentidegree;
-                    double deltaRightIn = (right - prevRight) * trackingWheelInchesPerCentidegree;
-                    deltaForward = (deltaLeftIn + deltaRightIn) / 2.0;
+                    deltaForward = (reading - prevReading) * trackingWheelInchesPerCentidegree;
                 } else {
-                    seeded = true; // this reading becomes the baseline; no delta yet
+                    seeded = true; // first good reading becomes the baseline
                 }
-                prevLeft = left;
-                prevRight = right;
-            }
-
-            if (backTrackingWheel != nullptr) {
-                std::int32_t backRaw = backTrackingWheel->get_position();
-                if (backRaw != PROS_ERR) {
-                    double back = backRaw;
-                    if (backSeeded) {
-                        deltaStrafe = (back - prevBack) * trackingWheelInchesPerCentidegree;
-                    } else {
-                        backSeeded = true;
-                    }
-                    prevBack = back;
-                }
+                prevReading = reading;
             }
         } else {
-            // Fallback: drive motor encoders (slip-prone, but always available).
+            // No tracking wheel, so fall back to the drive motors' own
+            // encoders. This works, but powered wheels slip, so the position
+            // drifts more over the course of a match.
+            //
+            // We average both sides together. During a turn one side goes
+            // forward while the other goes backward, so those cancel out and
+            // the average correctly reports "no forward movement".
             std::vector<double> leftPositions = leftMotors.get_position_all();
             std::vector<double> rightPositions = rightMotors.get_position_all();
             double leftAvg = std::accumulate(leftPositions.begin(), leftPositions.end(), 0.0) / leftPositions.size();
             double rightAvg = std::accumulate(rightPositions.begin(), rightPositions.end(), 0.0) / rightPositions.size();
+            double reading = (leftAvg + rightAvg) / 2.0;
 
-            // Same reasoning as above: a disconnected drive motor makes
-            // get_position_all() return PROS_ERR_F (infinity) for that
-            // motor, which poisons the average (sum-with-infinity stays
-            // infinity) and then odomX/odomY permanently - std::isfinite()
-            // catches it here since, unlike PROS_ERR above, PROS_ERR_F is
-            // actually infinity, not just a large finite number.
-            if (std::isfinite(leftAvg) && std::isfinite(rightAvg)) {
+            // Same danger as above, different error value. An unplugged motor
+            // reports PROS_ERR_F, which is literally infinity. Averaging
+            // anything with infinity gives infinity, so one bad motor poisons
+            // the whole reading. isfinite() catches it.
+            if (std::isfinite(reading)) {
                 if (seeded) {
-                    double deltaLeftIn = (leftAvg - prevLeft) / TICKS_PER_INCH;
-                    double deltaRightIn = (rightAvg - prevRight) / TICKS_PER_INCH;
-                    deltaForward = (deltaLeftIn + deltaRightIn) / 2.0;
+                    deltaForward = (reading - prevReading) / TICKS_PER_INCH;
                 } else {
                     seeded = true;
                 }
-                prevLeft = leftAvg;
-                prevRight = rightAvg;
+                prevReading = reading;
             }
         }
 
+        // Which way we are pointed, straight from the IMU (plus whatever
+        // offset reset_position() established).
         double headingDeg = imu->get_rotation() + headingOffset.load();
         double headingRad = headingDeg * M_PI / 180.0;
 
-        // heading is imu->get_rotation() directly - whatever direction the
-        // IMU (and therefore turn_degrees) calls "positive" - so position
-        // must accumulate using the matching compass-style convention
-        // (0 = +Y axis, clockwise-positive), not standard math cos/sin
-        // (0 = +X axis, counter-clockwise-positive). Using math convention
-        // here would make odometry believe "forward" rotates the opposite
-        // way turn_degrees actually turns the robot. deltaStrafe (local +X,
-        // the robot's right) follows the same rotation: at heading 0,
-        // sliding right moves along global +X - the mirror image of
-        // deltaForward's heading-0 case of moving along global +Y.
+        // Break this tick's forward movement into how much of it was along
+        // X and how much was along Y, based on which way we were facing.
+        //
+        // Note this uses sin for X and cos for Y, which looks backwards if
+        // you are used to math class. That is because we use the compass
+        // convention (heading 0 = +Y, clockwise positive) rather than the
+        // math convention (heading 0 = +X, counter-clockwise positive). See
+        // the big comment at the top of chassis.hpp. Getting this backwards
+        // would make the robot's tracked position rotate the opposite way
+        // from how it actually turns.
         odomMutex.take();
-        odomX += deltaForward * std::sin(headingRad) + deltaStrafe * std::cos(headingRad);
-        odomY += deltaForward * std::cos(headingRad) - deltaStrafe * std::sin(headingRad);
+        odomX += deltaForward * std::sin(headingRad);
+        odomY += deltaForward * std::cos(headingRad);
         odomHeading = headingDeg;
         odomMutex.give();
 
