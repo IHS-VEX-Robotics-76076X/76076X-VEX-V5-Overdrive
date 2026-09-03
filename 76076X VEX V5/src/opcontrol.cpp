@@ -39,17 +39,25 @@ static void update_status_display(pros::Controller &master) {
 
 void opcontrol() {
     pros::Controller master(pros::E_CONTROLLER_MASTER);
+    int prevLeft = 0;
+    int prevRight = 0;
 
     while (true) {
+        int targetLeft = 0;
+        int targetRight = 0;
         if constexpr (DEFAULT_DRIVE_MODE == DriveMode::ARCADE) {
-            int forward = util::deadband(static_cast<int>(master.get_analog(ANALOG_LEFT_Y)));
-            int turn = util::deadband(static_cast<int>(master.get_analog(ANALOG_LEFT_X)));
-            myRobot.drive(forward + turn, forward - turn);
+            int forward = util::expo(util::deadband(static_cast<int>(master.get_analog(ANALOG_LEFT_Y))), OPCONTROL_EXPO_GAIN);
+            int turn = util::expo(util::deadband(static_cast<int>(master.get_analog(ANALOG_LEFT_X))), OPCONTROL_EXPO_GAIN);
+            targetLeft = forward + turn;
+            targetRight = forward - turn;
         } else {
-            int left = util::deadband(static_cast<int>(master.get_analog(ANALOG_LEFT_Y)));
-            int right = util::deadband(static_cast<int>(master.get_analog(ANALOG_RIGHT_Y)));
-            myRobot.drive(left, right);
+            targetLeft = util::expo(util::deadband(static_cast<int>(master.get_analog(ANALOG_LEFT_Y))), OPCONTROL_EXPO_GAIN);
+            targetRight = util::expo(util::deadband(static_cast<int>(master.get_analog(ANALOG_RIGHT_Y))), OPCONTROL_EXPO_GAIN);
         }
+        // slew: tall Override stacks tip if the base jerks at full voltage
+        prevLeft = util::slew(prevLeft, targetLeft, OPCONTROL_SLEW_PER_LOOP);
+        prevRight = util::slew(prevRight, targetRight, OPCONTROL_SLEW_PER_LOOP);
+        myRobot.drive(prevLeft, prevRight);
 
         int cascadeSpeed = 0;
         if (master.get_digital(E_CONTROLLER_DIGITAL_L1)) cascadeSpeed += 127;
@@ -61,8 +69,19 @@ void opcontrol() {
         if (master.get_digital(E_CONTROLLER_DIGITAL_R2)) armSpeed -= 127;
         arm_turn_motor.move(armSpeed);
 
-        clamp_motor.move(master.get_digital(E_CONTROLLER_DIGITAL_A) ? 127 : 0);
-        intake_motor.move(master.get_digital(E_CONTROLLER_DIGITAL_X) ? 127 : 0);
+        // clamp: momentary both ways (A close / Y open), else hold position.
+        // Previous code only closed (127/0) with no release path.
+        int clampSpeed = 0;
+        if (master.get_digital(E_CONTROLLER_DIGITAL_A)) clampSpeed = 127;
+        else if (master.get_digital(E_CONTROLLER_DIGITAL_Y)) clampSpeed = -127;
+        clamp_motor.move(clampSpeed);
+
+        // intake: X in / B out (reverse clears jams and fixes cup orientation
+        // for SC3 - opaque vs transparent matters for yellow scoring).
+        int intakeSpeed = 0;
+        if (master.get_digital(E_CONTROLLER_DIGITAL_X)) intakeSpeed = 127;
+        else if (master.get_digital(E_CONTROLLER_DIGITAL_B)) intakeSpeed = -127;
+        intake_motor.move(intakeSpeed);
 
         update_status_display(master);
 

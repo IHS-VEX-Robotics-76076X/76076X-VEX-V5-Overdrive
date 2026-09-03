@@ -33,4 +33,22 @@ int deadband(int joystickValue, int threshold) {
     return joystickValue;
 }
 
+int expo(int joystickValue, double gain) {
+    if (joystickValue > 127) joystickValue = 127;
+    if (joystickValue < -127) joystickValue = -127;
+    if (gain < 0.0) gain = 0.0;
+    if (gain > 1.0) gain = 1.0;
+    double n = static_cast<double>(joystickValue) / 127.0;
+    double out = (1.0 - gain) * n + gain * n * n * n;
+    return static_cast<int>(out * 127.0);
+}
+
+int slew(int current, int target, int maxDelta) {
+    if (maxDelta < 0) maxDelta = -maxDelta;
+    int delta = target - current;
+    if (delta > maxDelta) return current + maxDelta;
+    if (delta < -maxDelta) return current - maxDelta;
+    return target;
+}
+
 } // namespace util

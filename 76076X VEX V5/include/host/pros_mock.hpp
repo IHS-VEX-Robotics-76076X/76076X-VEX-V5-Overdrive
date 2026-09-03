@@ -74,7 +74,9 @@ constexpr int E_CONTROLLER_DIGITAL_L2 = 7;
 constexpr int E_CONTROLLER_DIGITAL_R1 = 8;
 constexpr int E_CONTROLLER_DIGITAL_R2 = 9;
 constexpr int E_CONTROLLER_DIGITAL_A = 17;
+constexpr int E_CONTROLLER_DIGITAL_B = 16;
 constexpr int E_CONTROLLER_DIGITAL_X = 14;
+constexpr int E_CONTROLLER_DIGITAL_Y = 15;
 
 // Button masks
 constexpr int LCD_BTN_LEFT = 1 << 2;
@@ -171,12 +173,16 @@ class MotorGroup {
 
 class Imu {
     public:
-        Imu(int port) : angle(0.0) {}
-        double get_rotation() const { return angle.load(); }
+        Imu(int port) : angle(0.0), connected(true) {}
+        double get_rotation() const {
+            if (!connected.load()) { errno = ENODEV; return PROS_ERR_F; }
+            return angle.load();
+        }
         // Host mock has no real calibration delay to simulate, so `blocking`
         // is accepted (to match the real signature) but has no effect.
         std::int32_t reset(bool blocking = false) { angle = 0.0; return 1; }
         void set_rotation(double a) { angle = a; }
+        void set_connected(bool isConnected) { connected = isConnected; } // host-only test hook
     private:
         // atomic, not a plain double: real hardware's IMU is safe to read
         // from multiple concurrent tasks (e.g. a drive task and an odometry
@@ -184,6 +190,7 @@ class Imu {
         // host-only task that writes it to simulate rotation - a plain
         // double would make that a real data race.
         std::atomic<double> angle;
+        std::atomic<bool> connected;
 };
 
 // Tracking wheel sensor. Unlike Motor, this isn't driven by anything else in

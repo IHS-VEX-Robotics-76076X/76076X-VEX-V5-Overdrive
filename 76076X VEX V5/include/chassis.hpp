@@ -78,7 +78,8 @@ class Chassis {
         // ones, so this can't be left to caller discipline.
         ~Chassis();
 
-        void drive_forward(int speed, bool forward); // forward=false drives backward at the same speed
+        void drive_forward(int speed); // signed speed: +fwd / -rev, clamped to +/-127
+        void drive_forward(int speed, bool forward); // legacy bool form (delegates to signed form)
         void drive(int leftSpeed, int rightSpeed);
         void stop();
 

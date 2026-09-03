@@ -45,11 +45,15 @@ Chassis::~Chassis() {
     stop_odometry();
 }
 
-void Chassis::drive_forward(int speed, bool forward) {
-    if (!forward) speed = -speed;
+void Chassis::drive_forward(int speed) {
     speed = static_cast<int>(util::clamp(speed, -127.0, 127.0));
     leftMotors.move(speed);
     rightMotors.move(speed);
+}
+
+void Chassis::drive_forward(int speed, bool forward) {
+    if (!forward) speed = -speed;
+    drive_forward(speed);
 }
 
 void Chassis::drive(int leftSpeed, int rightSpeed) {
@@ -105,10 +109,23 @@ void Chassis::drive_distance(double inches) {
 
     drivePID.reset();
 
-    // hold whatever heading we started at, if an IMU is connected
-    double startHeading = (imu != nullptr) ? imu->get_rotation() : 0.0;
+    // hold whatever heading we started at, if an IMU is connected and valid.
+    // A disconnected IMU returns PROS_ERR_F (inf) - without this guard the
+    // correction below becomes inf -> clamped to +-127 -> wild spin.
+    double startHeading = 0.0;
+    bool headingValid = false;
+    if (imu != nullptr) {
+        double raw = imu->get_rotation();
+        if (std::isfinite(raw)) {
+            startHeading = raw;
+            headingValid = true;
+        }
+    }
     std::uint32_t startTime = pros::millis();
     double previousOutput = 0.0;
+    double lastProgressPos = 0.0;
+    std::uint32_t lastProgressTime = startTime;
+    bool progressSeeded = false;
 
     while (true) {
         // average position across both sides so one side stalling, slipping,
@@ -131,11 +148,15 @@ void Chassis::drive_distance(double inches) {
         clamped = previousOutput + delta;
         previousOutput = clamped;
 
-        // steer back toward the starting heading if we've drifted off it
+        // steer back toward the starting heading if we've drifted off it.
+        // Skipped entirely when the IMU is missing or just returned garbage.
         double correction = 0.0;
-        if (imu != nullptr) {
-            double headingError = imu->get_rotation() - startHeading;
-            correction = headingKP * headingError;
+        if (headingValid) {
+            double raw = imu->get_rotation();
+            if (std::isfinite(raw)) {
+                double headingError = raw - startHeading;
+                correction = headingKP * headingError;
+            }
         }
 
         leftMotors.move(static_cast<int>(util::clamp(clamped + correction, -127.0, 127.0)));
@@ -143,6 +164,20 @@ void Chassis::drive_distance(double inches) {
 
         if (drivePID.isSettled(error)) break;
         if (pros::millis() - startTime >= DRIVE_TIMEOUT_MS) break; // stalled/never converging - don't hang forever
+
+        // stall exit: commanding power but encoders aren't moving (pushed
+        // into a goal/wall). Saves auton clock vs burning the full timeout.
+        if (!progressSeeded) {
+            lastProgressPos = current;
+            lastProgressTime = pros::millis();
+            progressSeeded = true;
+        } else if (std::abs(current - lastProgressPos) > STALL_DRIVE_PROGRESS_TICKS) {
+            lastProgressPos = current;
+            lastProgressTime = pros::millis();
+        } else if (std::abs(clamped) > STALL_MIN_OUTPUT &&
+                   pros::millis() - lastProgressTime >= STALL_TIMEOUT_MS) {
+            break;
+        }
 
         pros::delay(10);
     }
@@ -160,13 +195,17 @@ void Chassis::turn_degrees(double degrees) {
     // being the very first movement of an autonomous routine).
     if (imu == nullptr) { stop(); return; }
     double startAngle = imu->get_rotation(); // get_rotation() is unbounded unlike get_heading()
+    if (!std::isfinite(startAngle)) { stop(); return; } // disconnected IMU: don't spin on garbage
     double targetAngle = startAngle + degrees;
 
     turnPID.reset();
     std::uint32_t startTime = pros::millis();
+    double lastProgressAngle = startAngle;
+    std::uint32_t lastProgressTime = startTime;
 
     while (true) {
         double heading = imu->get_rotation();
+        if (!std::isfinite(heading)) break; // IMU dropped mid-turn: stop rather than chase inf
         double error = targetAngle - heading;
         double output = turnPID.calculate(error, heading);
 
@@ -176,6 +215,14 @@ void Chassis::turn_degrees(double degrees) {
 
         if (turnPID.isSettled(error)) break;
         if (pros::millis() - startTime >= TURN_TIMEOUT_MS) break; // stalled/never converging - don't hang forever
+
+        if (std::abs(heading - lastProgressAngle) > STALL_TURN_PROGRESS_DEG) {
+            lastProgressAngle = heading;
+            lastProgressTime = pros::millis();
+        } else if (std::abs(clamped) > STALL_MIN_OUTPUT &&
+                   pros::millis() - lastProgressTime >= STALL_TIMEOUT_MS) {
+            break; // commanding turn power but heading frozen (high-centered/jammed)
+        }
 
         pros::delay(10);
     }
@@ -188,13 +235,17 @@ void Chassis::swing_turn(double degrees, DriveSide pivotSide) {
     // with stop(), so this one shouldn't be the exception.
     if (imu == nullptr) { stop(); return; }
     double startAngle = imu->get_rotation();
+    if (!std::isfinite(startAngle)) { stop(); return; }
     double targetAngle = startAngle + degrees;
 
     turnPID.reset();
     std::uint32_t startTime = pros::millis();
+    double lastProgressAngle = startAngle;
+    std::uint32_t lastProgressTime = startTime;
 
     while (true) {
         double heading = imu->get_rotation();
+        if (!std::isfinite(heading)) break;
         double error = targetAngle - heading;
         double output = turnPID.calculate(error, heading);
         double clamped = util::clamp(output, -127.0, 127.0);
@@ -211,6 +262,14 @@ void Chassis::swing_turn(double degrees, DriveSide pivotSide) {
 
         if (turnPID.isSettled(error)) break;
         if (pros::millis() - startTime >= TURN_TIMEOUT_MS) break; // stalled/never converging - don't hang forever
+
+        if (std::abs(heading - lastProgressAngle) > STALL_TURN_PROGRESS_DEG) {
+            lastProgressAngle = heading;
+            lastProgressTime = pros::millis();
+        } else if (std::abs(clamped) > STALL_MIN_OUTPUT &&
+                   pros::millis() - lastProgressTime >= STALL_TIMEOUT_MS) {
+            break;
+        }
 
         pros::delay(10);
     }
@@ -319,7 +378,19 @@ void Chassis::odomLoop() {
             }
         }
 
-        double headingDeg = imu->get_rotation() + headingOffset.load();
+        double imuRaw = imu->get_rotation();
+        // Disconnected IMU returns PROS_ERR_F (inf). Integrating that would
+        // inject inf/NaN into odomX/odomY forever (inf += finite stays inf).
+        // Freeze this tick instead - same policy as encoder disconnects.
+        if (!std::isfinite(imuRaw)) {
+            pros::delay(10);
+            continue;
+        }
+        double headingDeg = imuRaw + headingOffset.load();
+        if (!std::isfinite(headingDeg)) {
+            pros::delay(10);
+            continue;
+        }
         double headingRad = headingDeg * M_PI / 180.0;
 
         // heading is imu->get_rotation() directly - whatever direction the
@@ -363,8 +434,12 @@ void Chassis::reset_position(double x, double y, double headingDeg) {
     // headingOffset makes odomHeading track (imu rotation + offset) rather
     // than the raw IMU value, so the declared headingDeg actually persists
     // instead of being overwritten by the next odomLoop() tick.
+    // Guard against a disconnected IMU (inf): don't poison the offset.
     if (imu != nullptr) {
-        headingOffset = headingDeg - imu->get_rotation();
+        double raw = imu->get_rotation();
+        if (std::isfinite(raw)) {
+            headingOffset = headingDeg - raw;
+        }
     }
 
     odomMutex.take();

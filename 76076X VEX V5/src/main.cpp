@@ -7,17 +7,38 @@
 #include <atomic>
 
 void red_close_side();
+void red_far_side();
+void blue_close_side();
 void blue_far_side();
+void skills_auton();
+void safe_auton();
 
 // Autonomous selector: cycled with the LCD left/right buttons in
-// competition_initialize() below, since blue_far_side() otherwise has no
-// way to run without recompiling and redeploying between matches.
+// competition_initialize() below. Override AWP needs 7 pins on 3 goals on
+// your own side + both robots off the perimeter - one routine per
+// color/side plus skills/safe is the minimum useful set.
 enum class AutonRoutine {
 	RED_CLOSE,
-	BLUE_FAR
+	RED_FAR,
+	BLUE_CLOSE,
+	BLUE_FAR,
+	SKILLS,
+	SAFE
 };
 
 static AutonRoutine selected_auton = AutonRoutine::RED_CLOSE;
+
+static const char* auton_name(AutonRoutine r) {
+	switch (r) {
+		case AutonRoutine::RED_CLOSE:  return "Auton: RED CLOSE";
+		case AutonRoutine::RED_FAR:    return "Auton: RED FAR";
+		case AutonRoutine::BLUE_CLOSE: return "Auton: BLUE CLOSE";
+		case AutonRoutine::BLUE_FAR:   return "Auton: BLUE FAR";
+		case AutonRoutine::SKILLS:     return "Auton: SKILLS";
+		case AutonRoutine::SAFE:       return "Auton: SAFE (no move)";
+	}
+	return "Auton: ?";
+}
 
 pros::Motor cascade_motor(CASCADE_MOTOR_PORT);
 pros::Motor intake_motor(INTAKE_MOTOR_PORT);
@@ -111,19 +132,28 @@ void disabled() {}
  * starts.
  */
 void competition_initialize() {
+	auto step = [](int dir) {
+		int v = static_cast<int>(selected_auton) + dir;
+		const int N = static_cast<int>(AutonRoutine::SAFE) + 1;
+		if (v < 0) v = N - 1;
+		if (v >= N) v = 0;
+		selected_auton = static_cast<AutonRoutine>(v);
+	};
 	while (true) {
 		auto buttons = pros::lcd::read_buttons();
+		// edge-triggered with debounce: hold-to-scroll caused skipped
+		// selections when this ran every 20ms with no release wait.
 		if (buttons & LCD_BTN_LEFT) {
-			selected_auton = AutonRoutine::RED_CLOSE;
+			step(-1);
+			while (pros::lcd::read_buttons() & LCD_BTN_LEFT) pros::delay(20);
 		} else if (buttons & LCD_BTN_RIGHT) {
-			selected_auton = AutonRoutine::BLUE_FAR;
+			step(1);
+			while (pros::lcd::read_buttons() & LCD_BTN_RIGHT) pros::delay(20);
 		}
 
-		pros::lcd::set_text(3, selected_auton == AutonRoutine::RED_CLOSE
-		                            ? "Auton: RED CLOSE   (right > blue)"
-		                            : "Auton: BLUE FAR    (< left red)");
+		pros::lcd::set_text(3, auton_name(selected_auton));
 
-		pros::delay(20);
+		pros::delay(50);
 	}
 }
 
@@ -140,8 +170,12 @@ void competition_initialize() {
  */
 void autonomous() {
 	switch (selected_auton) {
-		case AutonRoutine::RED_CLOSE: red_close_side(); break;
-		case AutonRoutine::BLUE_FAR:  blue_far_side();  break;
+		case AutonRoutine::RED_CLOSE:  red_close_side(); break;
+		case AutonRoutine::RED_FAR:    red_far_side(); break;
+		case AutonRoutine::BLUE_CLOSE: blue_close_side(); break;
+		case AutonRoutine::BLUE_FAR:   blue_far_side();  break;
+		case AutonRoutine::SKILLS:     skills_auton(); break;
+		case AutonRoutine::SAFE:       safe_auton(); break;
 	}
 }
 

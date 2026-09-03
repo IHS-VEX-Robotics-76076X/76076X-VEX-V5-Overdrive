@@ -67,12 +67,39 @@ static void test_rand_range() {
     assert(seen.size() > 1);
 }
 
+static void test_expo() {
+    std::cout << "[test] util::expo\n";
+
+    assert(util::expo(0) == 0);
+    assert(util::expo(127, 0.0) == 127); // linear passes through
+    assert(util::expo(-127, 0.0) == -127);
+    // expo reduces mid-stick output for fine control but keeps endpoints
+    int mid_linear = util::expo(64, 0.0);
+    int mid_expo = util::expo(64, 0.4);
+    assert(mid_expo < mid_linear);
+    assert(mid_expo > 0);
+    assert(util::expo(127, 0.4) == 127);
+    assert(util::expo(-127, 0.4) == -127);
+}
+
+static void test_slew() {
+    std::cout << "[test] util::slew\n";
+
+    assert(util::slew(0, 100, 10) == 10);   // rate-limited
+    assert(util::slew(0, 5, 10) == 5);      // small step passes through
+    assert(util::slew(0, -100, 10) == -10);
+    assert(util::slew(50, 50, 10) == 50);
+    assert(util::slew(0, 100, 0) == 0);     // zero rate = frozen
+}
+
 int main() {
     std::cout << "Host test: util\n";
 
     test_clamp();
     test_sgn();
     test_deadband();
+    test_expo();
+    test_slew();
     test_rand_range();
 
     std::cout << "All util tests passed.\n";

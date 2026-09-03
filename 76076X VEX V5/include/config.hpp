@@ -22,10 +22,24 @@ constexpr double TICKS_PER_REV = 300.0;
 // sync if the formula ever changed in only one of the two call sites).
 constexpr double TICKS_PER_INCH = (TICKS_PER_REV * GEAR_RATIO) / (WHEEL_DIAMETER_INCH * M_PI);
 
-// Drive motor ports: 3 motors per side.
+// Drive motor ports: 2 motors per side (4x11W = 44W baseline).
+// Override R11a caps Subsystem 1 (drivetrain) at 55W and R11b bans PTO/
+// differentials off drive motors - a 3-per-side (66W) drive is illegal.
+// 4x11W leaves 11W of Subsystem 1 headroom and 44W of total-budget headroom
+// under the 88W robot total (R10a) for lift + manipulator.
 // Left side uses reversed ports for a mirrored drivetrain.
-constexpr std::array<std::int8_t, 3> LEFT_DRIVE_PORTS = {-1, -2, -3};
-constexpr std::array<std::int8_t, 3> RIGHT_DRIVE_PORTS = {4, 5, 6};
+constexpr std::array<std::int8_t, 2> LEFT_DRIVE_PORTS = {-1, -2};
+constexpr std::array<std::int8_t, 2> RIGHT_DRIVE_PORTS = {4, 5};
+
+// Motor power budget (V5 Smart Motors: 11W full, 5.5W half).
+//mechanism count: cascade + intake + arm + clamp = 4x11W.
+constexpr int WATT_PER_11W_MOTOR = 11;
+constexpr int SUBSYSTEM1_MAX_WATT = 55; // R11a drivetrain cap
+constexpr int ROBOT_MAX_WATT = 88;      // R10a robot total cap
+static_assert((LEFT_DRIVE_PORTS.size() + RIGHT_DRIVE_PORTS.size()) * WATT_PER_11W_MOTOR <= SUBSYSTEM1_MAX_WATT,
+    "Illegal drivetrain: Subsystem 1 exceeds 55W (R11a). Use at most 5x11W, e.g. 4x11W.");
+static_assert((LEFT_DRIVE_PORTS.size() + RIGHT_DRIVE_PORTS.size() + 4) * WATT_PER_11W_MOTOR <= ROBOT_MAX_WATT,
+    "Illegal robot: total exceeds 88W (R10a). Count drive + cascade + intake + arm + clamp.");
 
 // Mechanism ports.
 constexpr int CASCADE_MOTOR_PORT = 7;
@@ -82,6 +96,20 @@ constexpr double DEFAULT_TURN_SETTLE_VELOCITY = 0.5;   // degrees/loop
 // hanging the autonomous/opcontrol task forever.
 constexpr int DRIVE_TIMEOUT_MS = 3000;
 constexpr int TURN_TIMEOUT_MS = 2000;
+
+// Stall detection: exit early when commanding significant power but making
+// no encoder/IMU progress (e.g. pushed into a goal). Saves auton clock vs
+// burning the full timeout above. Progress is measured as position delta
+// (no extra sensor API needed, works on device and host mock alike).
+constexpr int STALL_TIMEOUT_MS = 500;              // no progress for this long -> stalled
+constexpr double STALL_DRIVE_PROGRESS_TICKS = 10.0; // min encoder ticks considered progress
+constexpr double STALL_TURN_PROGRESS_DEG = 1.0;     // min degrees considered progress
+constexpr double STALL_MIN_OUTPUT = 20.0;           // ignore stall when barely commanding power
+
+// Opcontrol shaping: slew limits jerk with tall stacks (tip/descore risk),
+// expo gives fine control near center for goal alignment.
+constexpr int OPCONTROL_SLEW_PER_LOOP = 10; // max voltage change per 20ms loop
+constexpr double OPCONTROL_EXPO_GAIN = 0.4; // 0 = linear, 1 = full cubic blend
 
 // Proportional gain correcting heading drift during drive_distance() using
 // the IMU. 0 disables correction (e.g. when no IMU is connected).
