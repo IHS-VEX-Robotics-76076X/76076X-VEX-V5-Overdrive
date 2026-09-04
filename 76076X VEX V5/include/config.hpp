@@ -77,8 +77,28 @@ constexpr double TICKS_PER_INCH = (TICKS_PER_REV * GEAR_RATIO) / (WHEEL_DIAMETER
 // differentials off drive motors - a 3-per-side (66W) drive is illegal.
 // 4x11W leaves 11W of Subsystem 1 headroom and 44W of total-budget headroom
 // under the 88W robot total (R10a) for lift + manipulator.
-// Left side uses reversed ports for a mirrored drivetrain.
-constexpr std::array<std::int8_t, 2> LEFT_DRIVE_PORTS = {-1, -2};
+//
+// ABOUT THE SIGNS
+//
+// All the driving code assumes one thing: a POSITIVE command means FORWARD,
+// on both sides. Turning works by sending +power to one side and -power to
+// the other, and odometry works by averaging both sides' encoders, so both
+// only behave correctly if that assumption holds.
+//
+// A negative port number tells PROS "this motor is mounted backwards, flip
+// it." Whether a side needs that depends purely on how the motors are
+// physically bolted to the robot.
+//
+// On THIS robot both sides already turn the same way for the same command -
+// forward on the left is forward on the right - so neither side needs
+// flipping and all four ports are positive.
+//
+// HOW TO CHECK ON THE ROBOT: push the left stick forward.
+//   - Robot drives forward       -> correct, nothing to change
+//   - Robot drives backward      -> negate ALL four ports
+//   - Robot spins instead of
+//     driving straight           -> negate just ONE side
+constexpr std::array<std::int8_t, 2> LEFT_DRIVE_PORTS = {1, 2};
 constexpr std::array<std::int8_t, 2> RIGHT_DRIVE_PORTS = {3, 4};
 
 // ---------------------------------------------------------------------------
