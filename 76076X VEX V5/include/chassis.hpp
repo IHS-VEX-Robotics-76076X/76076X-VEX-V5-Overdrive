@@ -19,16 +19,16 @@ class Chassis {
         PID turnPID;
         double headingKP; // corrects drift during drive_distance using the IMU (0 = no correction)
 
-        // Optional tracking wheels for odometry (see set_tracking_wheels()).
-        // leftTrackingWheel/rightTrackingWheel are the two parallel wheels;
-        // both must be set for tracking wheels to be used at all - without
-        // them, odomLoop() falls back to the (slip-prone) drive motor
-        // encoders. backTrackingWheel is independently optional even when
-        // the parallel wheels are set: nullptr just means no strafe/lateral
-        // tracking, not a fallback to encoders.
-        pros::Rotation *leftTrackingWheel = nullptr;
-        pros::Rotation *rightTrackingWheel = nullptr;
-        pros::Rotation *backTrackingWheel = nullptr;
+        // The single forward-facing tracking wheel (see set_tracking_wheel()).
+        // This is an unpowered wheel that just rolls along and reports how far
+        // it spun. It measures how far the robot travels; heading comes from
+        // the IMU. nullptr means one isn't installed, in which case odomLoop()
+        // falls back to reading the drive motors' own encoders instead.
+        pros::Rotation *trackingWheel = nullptr;
+
+        // pros::Rotation reports position in centidegrees (36000 per full
+        // turn). This converts those into inches of travel, worked out once in
+        // set_tracking_wheel() rather than every loop.
         double trackingWheelInchesPerCentidegree = 0.0;
 
         // Dead-reckoned odometry (inches, degrees), updated by a background
@@ -55,18 +55,24 @@ class Chassis {
         // Convenience constructors: construct from port lists.
         // Takes a vector (not initializer_list) so callers can hand it
         // config.hpp's std::array ports directly, whatever size they are.
+        // gearset is the drive motors' gear cartridge color - see
+        // DRIVE_MOTOR_GEARSET in config.hpp. It defaults to blue because that
+        // is what this robot uses.
         Chassis(const std::vector<std::int8_t>& leftPorts,
             const std::vector<std::int8_t>& rightPorts,
             pros::Imu *imu,
             PID drivePID,
             PID turnPID,
-            double headingKP = 0.0);
+            double headingKP = 0.0,
+            pros::v5::MotorGears gearset = pros::v5::MotorGears::blue);
 
-        // Constructor without IMU (uses imu port 0 placeholder)
+        // Constructor without IMU. The robot can still drive forward and
+        // backward, but turning, odometry, and drive_to_point() won't work.
         Chassis(const std::vector<std::int8_t>& leftPorts,
             const std::vector<std::int8_t>& rightPorts,
             PID drivePID,
-            PID turnPID);
+            PID turnPID,
+            pros::v5::MotorGears gearset = pros::v5::MotorGears::blue);
 
         // Stops the odometry task (if running) before the rest of the object
         // is torn down. Without this, destroying a Chassis whose odometry
@@ -89,17 +95,17 @@ class Chassis {
 
         bool has_fault() const; // true if any drivetrain motor is reporting an over-temp/over-current/driver fault
 
-        // Attaches dedicated (non-powered) tracking wheels for odometry,
-        // decoupled from drive-motor wheel slip. Call once before
-        // start_odometry() - if never called, odometry falls back to the
-        // drive motor encoders. leftWheel/rightWheel are the two parallel
-        // (forward-measuring) wheels; backWheel is the perpendicular
-        // (strafe-measuring) wheel - pass nullptr for it if you don't have
-        // one (you still get slip-free forward tracking from the parallel
-        // wheels, just no lateral/strafe component). Heading still comes
-        // from the IMU either way - see the odomHeading comment above.
-        void set_tracking_wheels(pros::Rotation *leftWheel, pros::Rotation *rightWheel,
-                                  pros::Rotation *backWheel, double wheelDiameterInch);
+        // Attaches the single forward-facing tracking wheel used for odometry.
+        // It's unpowered, so unlike the drive motors it can't spin while the
+        // robot sits still - no slip means honest distances.
+        //
+        // Call this BEFORE start_odometry(). If you never call it, or pass
+        // nullptr, odometry falls back to the drive motor encoders, which
+        // still works but drifts more over a match.
+        //
+        // Heading always comes from the IMU either way - see the odomHeading
+        // comment above.
+        void set_tracking_wheel(pros::Rotation *wheel, double wheelDiameterInch);
 
         // Dead-reckoned odometry. Call start_odometry() once (e.g. from
         // initialize()) to begin tracking position; requires an IMU.

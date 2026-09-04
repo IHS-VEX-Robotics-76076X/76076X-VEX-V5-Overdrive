@@ -13,17 +13,25 @@ SRCDIR=$(ROOT)/src
 INCDIR=$(ROOT)/include
 
 WARNFLAGS+=
-ifndef HOST_BUILD
-EXTRA_CFLAGS=-isystem./include/stubs
-EXTRA_CXXFLAGS=-isystem./include/stubs
-else
 EXTRA_CFLAGS=
 EXTRA_CXXFLAGS=
-endif
 EXTRA_LDFLAGS=
 
-# Add stubs directory for missing C++ standard library headers
-EXTRA_INCDIR:=$(INCDIR)/stubs
+# NOTE: there used to be an include/stubs/ directory here, added to the device
+# build with -isystem to paper over an ARM toolchain that was missing its
+# standard library headers. It has been deleted, because it broke the build
+# rather than fixing it.
+#
+# The problem: -isystem put those hand-written headers AHEAD of the real ones,
+# so <cstdint> resolved to a stub that declared uint8_t in the GLOBAL
+# namespace only. Any PROS header using std::uint8_t then failed - which is
+# most of them, starting with pros/adi.hpp. Worse, the real <tuple> and
+# <typeinfo> also broke, because they need std::intmax_t and correct
+# fixed-width types to work at all.
+#
+# The actual fix for a toolchain missing headers is to install a complete
+# toolchain (the PROS CLI ships one), not to hand-write fake standard headers.
+# If you hit "stdint.h: No such file or directory", see the README.
 
 # Set to 1 to enable hot/cold linking
 USE_PACKAGE:=1
