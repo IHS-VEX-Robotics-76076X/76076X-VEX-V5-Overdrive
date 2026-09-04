@@ -40,19 +40,28 @@ static const char* auton_name(AutonRoutine r) {
 	return "Auton: ?";
 }
 
-pros::Motor cascade_motor(CASCADE_MOTOR_PORT);
-pros::Motor intake_motor(INTAKE_MOTOR_PORT);
-pros::Motor arm_turn_motor(ARM_TURN_MOTOR_PORT);
-pros::Motor clamp_motor(CLAMP_MOTOR_PORT);
-pros::Imu inertial_sensor(INERTIAL_SENSOR_PORT);
+// ---------------------------------------------------------------------------
+// HARDWARE
+//
+// Every motor and sensor is created here, once, and shared with the rest of
+// the code. All port numbers and cartridge colors come from config.hpp -
+// change them THERE, not here.
+// ---------------------------------------------------------------------------
 
-// Tracking wheels for odometry - see set_tracking_wheels() below and the
-// port/geometry comments in config.hpp.
-pros::Rotation left_tracking_wheel(LEFT_TRACKING_WHEEL_PORT);
-pros::Rotation right_tracking_wheel(RIGHT_TRACKING_WHEEL_PORT);
-pros::Rotation back_tracking_wheel(BACK_TRACKING_WHEEL_PORT);
+// Cascade lift: two motors that always move together, so they're one group.
+pros::MotorGroup cascade_motors(
+    std::vector<std::int8_t>(CASCADE_MOTOR_PORTS.begin(), CASCADE_MOTOR_PORTS.end()),
+    CASCADE_MOTOR_GEARSET);
 
-// Drive train ports come from config.hpp - update the ports there, not here.
+// Single-motor mechanisms.
+pros::Motor intake_motor(INTAKE_MOTOR_PORT, INTAKE_MOTOR_GEARSET);
+pros::Motor arm_motor(ARM_MOTOR_PORT, ARM_MOTOR_GEARSET);
+
+// Sensors.
+pros::Imu inertial_sensor(INERTIAL_SENSOR_PORT);    // which way we're facing
+pros::Rotation tracking_wheel(TRACKING_WHEEL_PORT); // how far we've travelled
+
+// The drivetrain: 4 motors, 2 per side, plus the IMU and both PID tunings.
 Chassis myRobot(
     std::vector<std::int8_t>(LEFT_DRIVE_PORTS.begin(), LEFT_DRIVE_PORTS.end()),
     std::vector<std::int8_t>(RIGHT_DRIVE_PORTS.begin(), RIGHT_DRIVE_PORTS.end()),
@@ -61,8 +70,9 @@ Chassis myRobot(
         DEFAULT_DRIVE_INTEGRAL_CAP, DEFAULT_DRIVE_SETTLE_ERROR, DEFAULT_DRIVE_SETTLE_VELOCITY),
     PID(DEFAULT_TURN_KP, DEFAULT_TURN_KI, DEFAULT_TURN_KD,
         DEFAULT_TURN_INTEGRAL_CAP, DEFAULT_TURN_SETTLE_ERROR, DEFAULT_TURN_SETTLE_VELOCITY),
-    DEFAULT_HEADING_KP
-); // chassis
+    DEFAULT_HEADING_KP,
+    DRIVE_MOTOR_GEARSET
+);
 
 // Toggled by the LCD center button (its own PROS task) and read every
 // opcontrol() loop iteration (a different task) - plain bool would be an
@@ -101,18 +111,20 @@ void initialize() {
 
 	pros::lcd::register_btn1_cb(on_center_button);
 
-	// Lift/arm/clamp mechanisms hold position against gravity when stopped;
-	// the intake just needs a clean stop, not a held position.
-	cascade_motor.set_brake_mode(E_MOTOR_BRAKE_HOLD);
-	arm_turn_motor.set_brake_mode(E_MOTOR_BRAKE_HOLD);
-	clamp_motor.set_brake_mode(E_MOTOR_BRAKE_HOLD);
+	// The lift and arm must hold position against gravity when stopped, so
+	// they use HOLD. The intake has nothing to hold up and just needs to stop
+	// cleanly, so BRAKE is enough.
+	cascade_motors.set_brake_mode_all(E_MOTOR_BRAKE_HOLD);
+	arm_motor.set_brake_mode(E_MOTOR_BRAKE_HOLD);
 	intake_motor.set_brake_mode(E_MOTOR_BRAKE_BRAKE);
 
-	// Must be called before start_odometry() - see set_tracking_wheels() doc.
-	myRobot.set_tracking_wheels(&left_tracking_wheel, &right_tracking_wheel,
-	                             &back_tracking_wheel, TRACKING_WHEEL_DIAMETER_INCH);
+	// Hand the tracking wheel over, THEN start position tracking. Order
+	// matters: if start_odometry() runs first, odometry comes up using the
+	// drive motor encoders instead of the tracking wheel.
+	myRobot.set_tracking_wheel(&tracking_wheel, TRACKING_WHEEL_DIAMETER_INCH);
 	myRobot.start_odometry();
-	util::fun();
+
+	util::fun(); // seeds the random number generator
 }
 
 /**

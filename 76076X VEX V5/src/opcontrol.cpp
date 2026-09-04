@@ -11,11 +11,11 @@
 #include <cstdio>
 #include <atomic>
 
+// These all live in main.cpp - this is how we reach them from here.
 extern Chassis myRobot;
-extern pros::Motor cascade_motor;
+extern pros::MotorGroup cascade_motors;
 extern pros::Motor intake_motor;
-extern pros::Motor arm_turn_motor;
-extern pros::Motor clamp_motor;
+extern pros::Motor arm_motor;
 extern std::atomic<bool> show_status; // toggled by the LCD center button (see main.cpp)
 
 // Shows robot battery %, controller connection, and any drivetrain/mechanism
@@ -23,11 +23,15 @@ extern std::atomic<bool> show_status; // toggled by the LCD center button (see m
 static void update_status_display(pros::Controller &master) {
     if (!show_status) return;
 
+    // A non-zero fault value means a motor is overheating, drawing too much
+    // current, or reporting a driver fault.
     bool fault = myRobot.has_fault()
-        || cascade_motor.get_faults() != 0
         || intake_motor.get_faults() != 0
-        || arm_turn_motor.get_faults() != 0
-        || clamp_motor.get_faults() != 0;
+        || arm_motor.get_faults() != 0;
+
+    for (auto flags : cascade_motors.get_faults_all()) {
+        if (flags != 0) { fault = true; break; }
+    }
 
     char buf[40];
     std::snprintf(buf, sizeof(buf), "Bat:%d%% Ctrl:%s%s",
@@ -59,22 +63,18 @@ void opcontrol() {
         prevRight = util::slew(prevRight, targetRight, OPCONTROL_SLEW_PER_LOOP);
         myRobot.drive(prevLeft, prevRight);
 
+        // cascade lift: L1 up / L2 down. Holding both cancels out to 0, which
+        // is what we want. Both lift motors move together as one group.
         int cascadeSpeed = 0;
         if (master.get_digital(E_CONTROLLER_DIGITAL_L1)) cascadeSpeed += 127;
         if (master.get_digital(E_CONTROLLER_DIGITAL_L2)) cascadeSpeed -= 127;
-        cascade_motor.move(cascadeSpeed);
+        cascade_motors.move(cascadeSpeed);
 
+        // arm: R1 up / R2 down.
         int armSpeed = 0;
         if (master.get_digital(E_CONTROLLER_DIGITAL_R1)) armSpeed += 127;
         if (master.get_digital(E_CONTROLLER_DIGITAL_R2)) armSpeed -= 127;
-        arm_turn_motor.move(armSpeed);
-
-        // clamp: momentary both ways (A close / Y open), else hold position.
-        // Previous code only closed (127/0) with no release path.
-        int clampSpeed = 0;
-        if (master.get_digital(E_CONTROLLER_DIGITAL_A)) clampSpeed = 127;
-        else if (master.get_digital(E_CONTROLLER_DIGITAL_Y)) clampSpeed = -127;
-        clamp_motor.move(clampSpeed);
+        arm_motor.move(armSpeed);
 
         // intake: X in / B out (reverse clears jams and fixes cup orientation
         // for SC3 - opaque vs transparent matters for yellow scoring).

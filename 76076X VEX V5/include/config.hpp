@@ -1,5 +1,7 @@
 #pragma once
 
+#include "api.h" // for pros::v5::MotorGears, used by the cartridge settings below
+
 #include <array>
 #include <cstdint>
 #include <cmath>
@@ -11,15 +13,63 @@
 enum class DriveMode { ARCADE, TANK };
 constexpr DriveMode DEFAULT_DRIVE_MODE = DriveMode::ARCADE;
 
-// Robot configuration constants (tune for your robot)
-constexpr double WHEEL_DIAMETER_INCH = 3.25; // inches
-constexpr double GEAR_RATIO = 1.0;
-constexpr double TICKS_PER_REV = 300.0;
+// ---------------------------------------------------------------------------
+// MOTOR GEAR CARTRIDGES
+// ---------------------------------------------------------------------------
+//
+// Every V5 motor has a colored plastic gear cartridge inside it. The color
+// sets how fast and how strong the motor is, AND how many encoder "ticks" it
+// counts per revolution:
+//
+//     COLOR    SPEED      TICKS PER TURN    NOTES
+//     Red      100 RPM    1800              slowest, strongest
+//     Green    200 RPM     900              middle
+//     Blue     600 RPM     300              fastest, weakest
+//
+// Ticks matter because drive_distance() converts inches into ticks. If the
+// color here doesn't match the real motor, the robot drives the wrong
+// distance - off by a clean 3x between blue and green, with nothing to
+// indicate why. TICKS_PER_REV below is derived from this automatically, so the
+// ONLY thing you ever change is the color.
+//
+// Our robot:
+//   BLUE  - the 4 drivetrain motors and the intake (built for speed)
+//   GREEN - the 2 cascade motors and the arm (built for lifting)
+constexpr auto DRIVE_MOTOR_GEARSET   = pros::v5::MotorGears::blue;
+constexpr auto INTAKE_MOTOR_GEARSET  = pros::v5::MotorGears::blue;
+constexpr auto CASCADE_MOTOR_GEARSET = pros::v5::MotorGears::green;
+constexpr auto ARM_MOTOR_GEARSET     = pros::v5::MotorGears::green;
 
-// Computed once at compile time instead of every drive_distance()/odomLoop()
-// call - it's a pure function of the three constants above, so recomputing
-// it at runtime on every call was redundant (and risked drifting out of
-// sync if the formula ever changed in only one of the two call sites).
+// Looks up encoder ticks per motor revolution from the cartridge color, so
+// TICKS_PER_REV can never drift out of sync with the cartridge above.
+constexpr double ticks_per_rev_for(pros::v5::MotorGears gearset) {
+    return gearset == pros::v5::MotorGears::red   ? 1800.0   // 100 RPM
+         : gearset == pros::v5::MotorGears::green ?  900.0   // 200 RPM
+         :                                           300.0;  // 600 RPM (blue)
+}
+
+// ---------------------------------------------------------------------------
+// DRIVETRAIN GEOMETRY
+// ---------------------------------------------------------------------------
+//
+// These are what let the code turn "drive 24 inches" into a tick count.
+
+// Width of the driven wheels across the middle, in inches.
+constexpr double WHEEL_DIAMETER_INCH = 3.25;
+
+// Gearing between the motor and the wheel.
+//   1.0 = motor connects straight to the wheel
+//   2.0 = wheel turns twice per motor turn (geared for speed)
+//   0.5 = wheel turns half as often as the motor (geared for torque)
+constexpr double GEAR_RATIO = 1.0;
+
+// Encoder ticks per motor revolution, from the drivetrain cartridge color.
+constexpr double TICKS_PER_REV = ticks_per_rev_for(DRIVE_MOTOR_GEARSET);
+
+// Encoder ticks per inch the robot actually travels. Worked out once here at
+// compile time rather than recalculated in every drive function.
+//
+//   ticks per inch = (ticks per motor turn * gearing) / wheel circumference
 constexpr double TICKS_PER_INCH = (TICKS_PER_REV * GEAR_RATIO) / (WHEEL_DIAMETER_INCH * M_PI);
 
 // Drive motor ports: 2 motors per side (4x11W = 44W baseline).
@@ -29,47 +79,69 @@ constexpr double TICKS_PER_INCH = (TICKS_PER_REV * GEAR_RATIO) / (WHEEL_DIAMETER
 // under the 88W robot total (R10a) for lift + manipulator.
 // Left side uses reversed ports for a mirrored drivetrain.
 constexpr std::array<std::int8_t, 2> LEFT_DRIVE_PORTS = {-1, -2};
-constexpr std::array<std::int8_t, 2> RIGHT_DRIVE_PORTS = {4, 5};
+constexpr std::array<std::int8_t, 2> RIGHT_DRIVE_PORTS = {3, 4};
+
+// ---------------------------------------------------------------------------
+// MECHANISM PORTS
+// ---------------------------------------------------------------------------
+//
+// 8 motors total on this robot:
+//   4 drivetrain (above)
+//   2 cascade lift (always move together, so they're one MotorGroup)
+//   1 intake
+//   1 arm
+
+// Cascade lift: 2 motors driven as one unit so they can never fight.
+// One is negated because they face opposite directions on the lift.
+constexpr std::array<std::int8_t, 2> CASCADE_MOTOR_PORTS = {5, -6};
+
+// Single-motor mechanisms.
+constexpr std::int8_t INTAKE_MOTOR_PORT = 7;
+constexpr std::int8_t ARM_MOTOR_PORT    = 8;
+
+// Sensors.
+constexpr std::uint8_t INERTIAL_SENSOR_PORT = 11; // the IMU / gyro
 
 // Motor power budget (V5 Smart Motors: 11W full, 5.5W half).
-//mechanism count: cascade + intake + arm + clamp = 4x11W.
 constexpr int WATT_PER_11W_MOTOR = 11;
 constexpr int SUBSYSTEM1_MAX_WATT = 55; // R11a drivetrain cap
 constexpr int ROBOT_MAX_WATT = 88;      // R10a robot total cap
+constexpr int MECHANISM_MOTOR_COUNT =
+    CASCADE_MOTOR_PORTS.size() + 2; // + intake + arm
 static_assert((LEFT_DRIVE_PORTS.size() + RIGHT_DRIVE_PORTS.size()) * WATT_PER_11W_MOTOR <= SUBSYSTEM1_MAX_WATT,
     "Illegal drivetrain: Subsystem 1 exceeds 55W (R11a). Use at most 5x11W, e.g. 4x11W.");
-static_assert((LEFT_DRIVE_PORTS.size() + RIGHT_DRIVE_PORTS.size() + 4) * WATT_PER_11W_MOTOR <= ROBOT_MAX_WATT,
-    "Illegal robot: total exceeds 88W (R10a). Count drive + cascade + intake + arm + clamp.");
+static_assert((LEFT_DRIVE_PORTS.size() + RIGHT_DRIVE_PORTS.size() + MECHANISM_MOTOR_COUNT) * WATT_PER_11W_MOTOR <= ROBOT_MAX_WATT,
+    "Illegal robot: total exceeds 88W (R10a). Count drive + cascade + intake + arm.");
 
-// Mechanism ports.
-constexpr int CASCADE_MOTOR_PORT = 7;
-constexpr int INTAKE_MOTOR_PORT = 8;
-constexpr int ARM_TURN_MOTOR_PORT = 9;
-constexpr int CLAMP_MOTOR_PORT = 10;
-constexpr int INERTIAL_SENSOR_PORT = 11;
+// ---------------------------------------------------------------------------
+// TRACKING WHEEL (ODOMETRY) - we have exactly ONE, facing forward
+// ---------------------------------------------------------------------------
+//
+// A tracking wheel is a small wheel that NO motor drives. It just rolls along
+// the ground and reports how far it has spun.
+//
+// Why bother, when the drive motors already have encoders? Because a powered
+// wheel can spin without the robot actually moving - it slips when you
+// accelerate hard or shove into something. A free-spinning wheel doesn't lie.
+//
+// One forward-facing wheel is enough for full position tracking: the wheel
+// says HOW FAR we went, the IMU says WHICH WAY we were pointed. Combine them
+// every tick and you can add up the robot's path.
+//
+// What one wheel can't do is measure sideways drift. If the robot gets shoved
+// sideways, odometry won't notice. That needs a second wheel mounted
+// perpendicular, which we don't have.
+//
+// If this sensor isn't plugged in, odometry automatically falls back to the
+// drive motor encoders. Position tracking still works, just with more drift.
+//
+// Port uses the same negative-for-reversed convention as motor ports. If the
+// tracked distance goes DOWN when the robot drives forward, negate this.
+constexpr std::int8_t TRACKING_WHEEL_PORT = 12;
 
-// Tracking wheel odometry (3-wheel: two parallel + one perpendicular).
-// Dedicated, non-powered wheels give slip-free position tracking - unlike
-// reading the drive motors' own encoders, they aren't thrown off by wheel
-// spin during acceleration or collisions. Ports use the same
-// negative-for-reversed convention as motor ports (see pros::Rotation).
-// Heading still comes from the IMU either way (see Chassis::odomLoop) - the
-// perpendicular wheel is what actually adds new information, since it
-// tracks lateral drift/scrub that encoder-only or single-wheel odometry
-// can't see at all.
-// TODO: set these to your actual tracking wheel ports/geometry. Pass
-// nullptr for backTrackingWheel in Chassis::set_tracking_wheels() if you
-// don't have a perpendicular wheel - you still get slip-free forward
-// tracking from the two parallel wheels alone, just no strafe component.
-constexpr std::int8_t LEFT_TRACKING_WHEEL_PORT = 12;
-constexpr std::int8_t RIGHT_TRACKING_WHEEL_PORT = -13;
-constexpr std::int8_t BACK_TRACKING_WHEEL_PORT = 14;
-constexpr double TRACKING_WHEEL_DIAMETER_INCH = 2.75; // common VEX tracking wheel size
-
-// pros::Rotation reports position in centidegrees (36000 per revolution) -
-// this is a fixed hardware constant, not something to tune. Computed once
-// at compile time for the same reason as TICKS_PER_INCH above.
-constexpr double TRACKING_WHEEL_INCHES_PER_CENTIDEGREE = (TRACKING_WHEEL_DIAMETER_INCH * M_PI) / 36000.0;
+// Width of the tracking wheel across the middle, in inches. 2.75 is the
+// common VEX size.
+constexpr double TRACKING_WHEEL_DIAMETER_INCH = 2.75;
 
 // Default PID gains (safe defaults; tune for your robot)
 constexpr double DEFAULT_DRIVE_KP = 0.5;

@@ -243,31 +243,56 @@ static void test_odometry_tracks_straight_line_drive() {
     assert(std::abs(heading) < 1.0);
 }
 
-// Tracking wheels are unpowered and independent of the drive motors in the
-// mock (as on real hardware), so these tests drive them directly via
+// The gear cartridge decides how many encoder ticks a motor counts per
+// revolution, and drive_distance() converts inches to ticks using that. Get it
+// wrong and every autonomous movement is off by a constant factor (3x between
+// blue and green) with nothing to indicate why - the robot just drives the
+// wrong distance. These are fixed hardware facts, so pin them down rather than
+// trusting the lookup stays correct.
+static void test_ticks_per_rev_matches_cartridge_color() {
+    std::cout << "[test] encoder ticks per revolution match the gear cartridge\n";
+
+    assert(ticks_per_rev_for(pros::v5::MotorGears::red) == 1800.0);   // 100 RPM
+    assert(ticks_per_rev_for(pros::v5::MotorGears::green) == 900.0);  // 200 RPM
+    assert(ticks_per_rev_for(pros::v5::MotorGears::blue) == 300.0);   // 600 RPM
+
+    // Our drivetrain is blue, so TICKS_PER_REV must have resolved to 300.
+    std::cout << "  drivetrain is blue -> TICKS_PER_REV=" << TICKS_PER_REV << " (expect 300)\n";
+    assert(TICKS_PER_REV == 300.0);
+
+    double expected = (300.0 * GEAR_RATIO) / (WHEEL_DIAMETER_INCH * M_PI);
+    std::cout << "  TICKS_PER_INCH=" << TICKS_PER_INCH << " (expect " << expected << ")\n";
+    assert(std::abs(TICKS_PER_INCH - expected) < 1e-9);
+}
+
+// Converts a distance in inches into the centidegree reading a tracking wheel
+// of TRACKING_WHEEL_DIAMETER_INCH would report after rolling that far. Mirrors
+// the conversion Chassis::set_tracking_wheel() derives internally.
+static double inches_to_tracking_centidegrees(double inches) {
+    return inches * 36000.0 / (TRACKING_WHEEL_DIAMETER_INCH * M_PI);
+}
+
+// The tracking wheel is unpowered and independent of the drive motors in the
+// mock (as on real hardware), so these tests drive it directly via
 // set_position() rather than through drive_distance() - that isolates the
 // odomLoop() math itself (does a tracking-wheel delta convert to (x, y)
-// correctly?) from whether the drivetrain happens to move in sync with them.
+// correctly?) from whether the drivetrain happens to move in sync with it.
 static void test_tracking_wheel_odometry_pure_forward() {
     std::cout << "[test] tracking wheel odometry: pure forward movement\n";
 
     pros::Imu imu(0);
-    imu.set_rotation(0.0); // heading 0 throughout
-    pros::Rotation leftWheel(60);
-    pros::Rotation rightWheel(61);
+    imu.set_rotation(0.0); // heading 0 = facing +Y throughout
+    pros::Rotation wheel(60);
     PID drivePid(0.5, 0.0, 0.0);
     PID turnPid(1.0, 0.0, 0.0);
-    Chassis robot({62}, {63}, &imu, drivePid, turnPid); // drive ports unused - tracking wheels take over
+    Chassis robot({62}, {63}, &imu, drivePid, turnPid); // drive ports unused - tracking wheel takes over
 
-    robot.set_tracking_wheels(&leftWheel, &rightWheel, nullptr, TRACKING_WHEEL_DIAMETER_INCH);
+    robot.set_tracking_wheel(&wheel, TRACKING_WHEEL_DIAMETER_INCH);
     robot.reset_position(0.0, 0.0, 0.0);
     robot.start_odometry();
     pros::delay(30); // let odomLoop seed its baseline
 
-    double targetInches = 10.0;
-    double centideg = targetInches / TRACKING_WHEEL_INCHES_PER_CENTIDEGREE;
-    leftWheel.set_position(centideg);
-    rightWheel.set_position(centideg);
+    wheel.set_position(inches_to_tracking_centidegrees(10.0));
     pros::delay(30); // let odomLoop pick up the change
 
     robot.stop_odometry();
@@ -279,37 +304,69 @@ static void test_tracking_wheel_odometry_pure_forward() {
     assert(std::abs(x) < 0.5);
 }
 
-// Only the back (perpendicular) tracking wheel moves here - this is exactly
-// the kind of lateral drift/scrub that drive-motor-encoder odometry (or even
-// two forward-only tracking wheels) has no way to detect at all.
-static void test_tracking_wheel_odometry_pure_strafe() {
-    std::cout << "[test] tracking wheel odometry: pure strafe (back wheel)\n";
+// Bench-testing with only the drivetrain wired up means the tracking wheel is
+// configured in code but not physically plugged in, so every read of it fails.
+// Odometry has to notice that and fall back to the drive encoders. Without the
+// fallback it sits frozen at its starting position for the whole run, silently,
+// which looks exactly like "odometry is broken" with no clue why.
+static void test_odometry_falls_back_when_tracking_wheel_never_responds() {
+    std::cout << "[test] odometry falls back to encoders when the tracking wheel isn't plugged in\n";
 
     pros::Imu imu(0);
     imu.set_rotation(0.0);
-    pros::Rotation leftWheel(64);
-    pros::Rotation rightWheel(65);
-    pros::Rotation backWheel(66);
+    pros::Rotation wheel(85);
+    wheel.set_connected(false); // never plugged in
+    PID drivePid(0.5, 0.0, 0.0);
+    PID turnPid(1.0, 0.0, 0.0);
+    Chassis robot({86}, {87}, &imu, drivePid, turnPid);
+
+    robot.set_tracking_wheel(&wheel, TRACKING_WHEEL_DIAMETER_INCH);
+    robot.reset_position(0.0, 0.0, 0.0);
+    robot.start_odometry();
+
+    // Long enough to exhaust TRACKING_WHEEL_GIVE_UP_TICKS (~0.5s) and switch.
+    pros::delay(700);
+
+    robot.drive_distance(10.0);
+    pros::delay(50);
+
+    double y = robot.get_y();
+    std::cout << "  y=" << y << " (expect ~10 from the drive encoders, not 0)\n";
+    assert(std::isfinite(y));
+    assert(std::abs(y - 10.0) < 3.0);
+
+    wheel.set_connected(true); // don't leak state into later tests
+    robot.stop_odometry();
+}
+
+// The same 10 inches of wheel travel, but facing +X instead of +Y. This is
+// what actually pins down the sin/cos split in odomLoop(): at heading 0 the
+// compass and standard-math conventions agree, so a forward-only test can't
+// tell them apart. At heading 90 they disagree completely.
+static void test_tracking_wheel_odometry_at_ninety_degrees() {
+    std::cout << "[test] tracking wheel odometry: driving while facing +X (heading 90)\n";
+
+    pros::Imu imu(0);
+    imu.set_rotation(90.0); // facing +X under the compass convention
+    pros::Rotation wheel(64);
     PID drivePid(0.5, 0.0, 0.0);
     PID turnPid(1.0, 0.0, 0.0);
     Chassis robot({67}, {68}, &imu, drivePid, turnPid);
 
-    robot.set_tracking_wheels(&leftWheel, &rightWheel, &backWheel, TRACKING_WHEEL_DIAMETER_INCH);
-    robot.reset_position(0.0, 0.0, 0.0);
+    robot.set_tracking_wheel(&wheel, TRACKING_WHEEL_DIAMETER_INCH);
+    robot.reset_position(0.0, 0.0, 90.0);
     robot.start_odometry();
     pros::delay(30);
 
-    double targetInches = 5.0;
-    double centideg = targetInches / TRACKING_WHEEL_INCHES_PER_CENTIDEGREE;
-    backWheel.set_position(centideg);
+    wheel.set_position(inches_to_tracking_centidegrees(10.0));
     pros::delay(30);
 
     robot.stop_odometry();
 
     double x = robot.get_x();
     double y = robot.get_y();
-    std::cout << "  x=" << x << " y=" << y << " (expect x~5, y~0)\n";
-    assert(std::abs(x - 5.0) < 0.5);
+    std::cout << "  x=" << x << " y=" << y << " (expect x~10, y~0)\n";
+    assert(std::abs(x - 10.0) < 0.5);
     assert(std::abs(y) < 0.5);
 }
 
@@ -533,38 +590,33 @@ static void test_odometry_survives_tracking_wheel_disconnection() {
 
     pros::Imu imu(0);
     imu.set_rotation(0.0);
-    pros::Rotation leftWheel(80);
-    pros::Rotation rightWheel(81);
+    pros::Rotation wheel(80);
     PID drivePid(0.5, 0.0, 0.0);
     PID turnPid(1.0, 0.0, 0.0);
     Chassis robot({82}, {83}, &imu, drivePid, turnPid);
 
-    robot.set_tracking_wheels(&leftWheel, &rightWheel, nullptr, TRACKING_WHEEL_DIAMETER_INCH);
+    robot.set_tracking_wheel(&wheel, TRACKING_WHEEL_DIAMETER_INCH);
     robot.reset_position(0.0, 0.0, 0.0);
     robot.start_odometry();
     pros::delay(30);
 
-    double centideg10in = 10.0 / TRACKING_WHEEL_INCHES_PER_CENTIDEGREE;
-    leftWheel.set_position(centideg10in);
-    rightWheel.set_position(centideg10in);
+    wheel.set_position(inches_to_tracking_centidegrees(10.0));
     pros::delay(30);
     double yBefore = robot.get_y();
     std::cout << "  before disconnect: y=" << yBefore << "\n";
 
-    leftWheel.set_connected(false);
+    wheel.set_connected(false);
     pros::delay(50);
     double yDuring = robot.get_y();
     std::cout << "  during disconnect: y=" << yDuring << " (must stay finite and unchanged)\n";
     assert(std::isfinite(yDuring));
     assert(std::abs(yDuring - yBefore) < 0.01);
 
-    leftWheel.set_connected(true); // reconnect - don't leak state into later tests
-    double centideg20in = 20.0 / TRACKING_WHEEL_INCHES_PER_CENTIDEGREE;
-    leftWheel.set_position(centideg20in);
-    rightWheel.set_position(centideg20in);
+    wheel.set_connected(true); // reconnect - don't leak state into later tests
+    wheel.set_position(inches_to_tracking_centidegrees(20.0));
     pros::delay(30);
     double yAfter = robot.get_y();
-    std::cout << "  after reconnect (wheels now read 20in total): y=" << yAfter << " (expect ~20)\n";
+    std::cout << "  after reconnect (wheel now reads 20in total): y=" << yAfter << " (expect ~20)\n";
     assert(std::isfinite(yAfter));
     assert(std::abs(yAfter - 20.0) < 0.5);
 
@@ -743,8 +795,10 @@ int main() {
     test_turn_functions_stop_motors_even_without_an_imu();
     test_drive_and_turn_timeout_when_gains_never_converge();
     test_odometry_tracks_straight_line_drive();
+    test_ticks_per_rev_matches_cartridge_color();
     test_tracking_wheel_odometry_pure_forward();
-    test_tracking_wheel_odometry_pure_strafe();
+    test_tracking_wheel_odometry_at_ninety_degrees();
+    test_odometry_falls_back_when_tracking_wheel_never_responds();
     test_drive_to_point_reaches_off_axis_target();
     test_drive_to_point_without_odometry_is_a_no_op();
     test_drive_to_point_at_current_position_is_a_no_op();
