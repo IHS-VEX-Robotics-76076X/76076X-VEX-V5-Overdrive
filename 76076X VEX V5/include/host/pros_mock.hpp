@@ -222,6 +222,10 @@ class Imu {
         // Host mock has no real calibration delay to simulate, so `blocking`
         // is accepted (to match the real signature) but has no effect.
         std::int32_t reset(bool blocking = false) { angle = 0.0; return 1; }
+        // Mirrors pros::Device::is_installed() - whether anything is actually
+        // plugged into the port. initialize() uses this to skip IMU
+        // calibration entirely when there's no IMU to calibrate.
+        bool is_installed() { return connected.load(); }
         void set_rotation(double a) { angle = a; }
         void set_connected(bool isConnected) { connected = isConnected; } // host-only test hook
     private:
