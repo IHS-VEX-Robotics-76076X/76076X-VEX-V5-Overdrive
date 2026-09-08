@@ -784,6 +784,20 @@ static void test_drive_stall_exits_early() {
     assert(elapsed >= static_cast<std::uint32_t>(DRIVE_TIMEOUT_MS));
 }
 
+// The autonomous routines in autonomous.cpp are placeholders that drive
+// blindly forward, so they must not run until real ones are written. This
+// guards the flag itself: if someone flips AUTON_ENABLED to true without
+// meaning to, this test fails loudly on the next build instead of the robot
+// discovering it on a field.
+//
+// Delete or invert this test at the same time you enable auton for real.
+static void test_auton_is_disabled_while_routines_are_placeholders() {
+    std::cout << "[test] autonomous is disabled (placeholder routines must not run)\n";
+
+    std::cout << "  AUTON_ENABLED=" << AUTON_ENABLED << " (expect 0)\n";
+    assert(AUTON_ENABLED == false);
+}
+
 int main() {
     std::cout << "Host test: Chassis\n";
 
@@ -795,6 +809,7 @@ int main() {
     test_turn_functions_stop_motors_even_without_an_imu();
     test_drive_and_turn_timeout_when_gains_never_converge();
     test_odometry_tracks_straight_line_drive();
+    test_auton_is_disabled_while_routines_are_placeholders();
     test_ticks_per_rev_matches_cartridge_color();
     test_tracking_wheel_odometry_pure_forward();
     test_tracking_wheel_odometry_at_ninety_degrees();
