@@ -163,7 +163,13 @@ void competition_initialize() {
 			while (pros::lcd::read_buttons() & LCD_BTN_RIGHT) pros::delay(20);
 		}
 
-		pros::lcd::set_text(3, auton_name(selected_auton));
+		// Say so plainly when the selection can't do anything, rather than
+		// letting someone cycle through routines that are never going to run.
+		if (AUTON_ENABLED) {
+			pros::lcd::set_text(3, auton_name(selected_auton));
+		} else {
+			pros::lcd::set_text(3, "Auton: DISABLED (config.hpp)");
+		}
 
 		pros::delay(50);
 	}
@@ -181,6 +187,20 @@ void competition_initialize() {
  * from where it left off.
  */
 void autonomous() {
+	// AUTON_ENABLED is false while the robot is still being built and tested,
+	// which means: sit still and do nothing for the whole autonomous period,
+	// then let the driver take over. The routines in autonomous.cpp are only
+	// placeholders that drive blindly forward, so running them on a real field
+	// would just push the robot into whatever happens to be in front of it.
+	//
+	// stop() rather than an empty body, so that if anything was left moving
+	// before autonomous started, it gets shut off here.
+	if (!AUTON_ENABLED) {
+		myRobot.stop();
+		pros::lcd::set_text(3, "Auton: DISABLED (config.hpp)");
+		return;
+	}
+
 	switch (selected_auton) {
 		case AutonRoutine::RED_CLOSE:  red_close_side(); break;
 		case AutonRoutine::RED_FAR:    red_far_side(); break;

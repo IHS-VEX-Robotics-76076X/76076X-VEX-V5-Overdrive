@@ -6,9 +6,26 @@
 #include <cstdint>
 #include <cmath>
 
+// ---------------------------------------------------------------------------
+// AUTONOMOUS ON / OFF
+// ---------------------------------------------------------------------------
+//
+// While this is false, the robot does NOTHING during the autonomous period.
+// It just sits still until driver control starts. The routines in
+// autonomous.cpp are never called, and the LCD auton selector is ignored.
+//
+// This is the right setting while the robot is still being built and tested,
+// because the routines in autonomous.cpp are only placeholders - they drive
+// blindly forward for a second with no idea what is in front of them.
+//
+// Flip this to true once real routines are written and tested. Nothing else
+// needs changing; the selector and all the routines are still wired up and
+// waiting.
+constexpr bool AUTON_ENABLED = false;
+
 // Driver control style. ARCADE: one stick (left Y = forward, left X = turn).
 // TANK: two sticks (left Y = left side, right Y = right side). This is a tank
-// drivetrain (3 motors/side, no mecanum) - "arcade" here still means single-
+// drivetrain (2 motors/side, no mecanum) - "arcade" here still means single-
 // stick turning, not strafing.
 enum class DriveMode { ARCADE, TANK };
 constexpr DriveMode DEFAULT_DRIVE_MODE = DriveMode::ARCADE;
