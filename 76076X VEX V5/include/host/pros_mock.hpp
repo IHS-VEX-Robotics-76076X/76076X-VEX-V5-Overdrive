@@ -1,5 +1,20 @@
 #pragma once
 
+// HOST BUILD ONLY.
+//
+// This file fakes the PROS API so the chassis/PID/util logic can be compiled
+// and run on a laptop with no robot attached. It is never part of the build
+// that goes on the brain - api.h only pulls it in when HOST_BUILD is defined.
+//
+// The #ifdef below makes that explicit rather than implied. Without it, the
+// editor parses this file using the ARM/device configuration, where <mutex>
+// and <thread> don't exist, and reports a pile of "namespace std has no
+// member mutex" errors against a file the device build never even reads.
+// Those errors were pure noise - they never had anything to do with whether
+// the robot code compiled - but noise in the Problems panel hides real
+// errors, which is worth avoiding.
+#ifdef HOST_BUILD
+
 #include <vector>
 #include <initializer_list>
 #include <chrono>
@@ -364,3 +379,5 @@ inline void host_set_controller_digital(int button, bool pressed) { __host_contr
 inline bool host_get_controller_digital(int button) { auto it = __host_controller_digital.find(button); return it != __host_controller_digital.end() && it->second; }
 
 } // namespace pros
+
+#endif // HOST_BUILD

@@ -1,4 +1,31 @@
 ################################################################################
+############################## Toolchain picker ################################
+#
+# Building for the brain needs an ARM toolchain that includes newlib AND
+# libstdc++. Homebrew's `arm-none-eabi-gcc` formula ships NEITHER - just the
+# bare compiler. If that one wins on PATH, the build dies at the link step:
+#
+#     arm-none-eabi-ld: cannot find -lstdc++
+#
+# and since the build failed, nothing new ever gets uploaded, so the brain
+# just keeps running whatever was on it before (or nothing at all).
+#
+# The PROS VS Code extension installs a complete toolchain. Prefer it whenever
+# it's present, so `pros make` works from a plain terminal without anyone
+# having to remember an environment variable.
+#
+# To use a different toolchain, set PROS_TOOLCHAIN yourself - that wins,
+# because this only fills PATH in when it isn't already pointing somewhere.
+PROS_VSCODE_TOOLCHAIN := $(HOME)/Library/Application Support/Code/User/globalStorage/sigbots.pros/install/pros-toolchain-macos/bin
+ifeq ($(PROS_TOOLCHAIN),)
+ifeq ($(shell test -x "$(PROS_VSCODE_TOOLCHAIN)/arm-none-eabi-g++" && echo yes),yes)
+# Only arm-none-eabi-* binaries live in there, so prepending can't shadow the
+# host g++ that HOST_BUILD=1 relies on.
+export PATH := $(PROS_VSCODE_TOOLCHAIN):$(PATH)
+endif
+endif
+
+################################################################################
 ######################### User configurable parameters #########################
 # filename extensions
 CEXTS:=c
