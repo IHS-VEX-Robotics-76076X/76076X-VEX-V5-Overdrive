@@ -99,15 +99,28 @@ void on_center_button() {
  */
 void initialize() {
 	pros::lcd::initialize();
-	pros::lcd::set_text(1, "Calibrating IMU...");
+	pros::lcd::set_text(0, "76076X Overdrive");
 
-	// Blocks ~2s until calibration finishes (3s safety timeout) - the IMU's
-	// get_rotation() is meaningless before this, which would otherwise throw
-	// off turn_degrees()/swing_turn()/odometry if they ran too soon after
-	// power-on.
-	inertial_sensor.reset(true);
+	// With no competition switch or field control plugged in, the brain runs
+	// initialize() and then goes straight into opcontrol(). autonomous() and
+	// competition_initialize() are never called at all. That makes this
+	// function the only thing standing between hitting Run and driving, so
+	// anything slow in here is dead time you have to sit through.
+	if (inertial_sensor.is_installed()) {
+		pros::lcd::set_text(1, "Calibrating IMU (~2s)...");
 
-	pros::lcd::set_text(1, "76076X Overdrive - Ready");
+		// Blocks until calibration finishes (3s timeout). The IMU's
+		// get_rotation() is meaningless until then, and turning plus position
+		// tracking both read it, so it's worth waiting for.
+		inertial_sensor.reset(true);
+		pros::lcd::set_text(1, "READY - driver control");
+	} else {
+		// No IMU plugged in. Normal when bench-testing just the drivetrain, so
+		// skip calibration rather than stalling on a device that isn't there.
+		// Driving still works. Turning and position tracking do not, and they
+		// no-op safely rather than misbehaving.
+		pros::lcd::set_text(1, "READY - no IMU, drive only");
+	}
 
 	pros::lcd::register_btn1_cb(on_center_button);
 
@@ -123,6 +136,11 @@ void initialize() {
 	// drive motor encoders instead of the tracking wheel.
 	myRobot.set_tracking_wheel(&tracking_wheel, TRACKING_WHEEL_DIAMETER_INCH);
 	myRobot.start_odometry();
+
+	// Report the auton state here too, not just in competition_initialize().
+	// That function only runs when field control is attached, so on a bare
+	// brain this is the only place it would ever get shown.
+	pros::lcd::set_text(3, AUTON_ENABLED ? "Auton: ENABLED" : "Auton: DISABLED (config.hpp)");
 
 	util::fun(); // seeds the random number generator
 }
