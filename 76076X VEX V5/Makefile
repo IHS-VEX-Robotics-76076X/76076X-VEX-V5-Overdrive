@@ -16,12 +16,21 @@
 #
 # To use a different toolchain, set PROS_TOOLCHAIN yourself - that wins,
 # because this only fills PATH in when it isn't already pointing somewhere.
-PROS_VSCODE_TOOLCHAIN := $(HOME)/Library/Application Support/Code/User/globalStorage/sigbots.pros/install/pros-toolchain-macos/bin
+#
+# This is a macOS-only workaround, because the broken-toolchain situation it
+# fixes is a Homebrew one. Windows installs get their toolchain from the PROS
+# installer or the VS Code extension and don't hit it. The $(OS) check is what
+# keeps this away from Windows: Windows sets OS=Windows_NT in the environment,
+# so the whole block is skipped without invoking a shell at all - no stray
+# "'test' is not recognized" noise in someone else's build.
+ifneq ($(OS),Windows_NT)
 ifeq ($(PROS_TOOLCHAIN),)
+PROS_VSCODE_TOOLCHAIN := $(HOME)/Library/Application Support/Code/User/globalStorage/sigbots.pros/install/pros-toolchain-macos/bin
 ifeq ($(shell test -x "$(PROS_VSCODE_TOOLCHAIN)/arm-none-eabi-g++" && echo yes),yes)
 # Only arm-none-eabi-* binaries live in there, so prepending can't shadow the
 # host g++ that HOST_BUILD=1 relies on.
 export PATH := $(PROS_VSCODE_TOOLCHAIN):$(PATH)
+endif
 endif
 endif
 
