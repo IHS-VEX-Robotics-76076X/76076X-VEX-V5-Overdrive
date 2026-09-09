@@ -5,6 +5,17 @@
 
 #include <vector>
 #include <atomic>
+#include <cstdio>
+
+// TEMPORARY STARTUP DIAGNOSTIC - remove once the "no LCD output, no drive"
+// issue is root-caused. Prints to the PROS terminal (`pros terminal`) at two
+// checkpoints so we can tell whether the program is dying/hanging during
+// global static initialization (before DIAG_STATIC_INIT prints) or somewhere
+// inside initialize() (after it, before DIAG_INIT_REACHED prints).
+struct DiagStaticInitMarker {
+    DiagStaticInitMarker() { std::printf("DIAG: static init started\n"); }
+};
+static DiagStaticInitMarker diag_static_init_marker;
 
 void red_close_side();
 void red_far_side();
@@ -98,6 +109,7 @@ void on_center_button() {
  * to keep execution time for this mode under a few seconds.
  */
 void initialize() {
+	std::printf("DIAG: initialize() reached\n"); // TEMPORARY - see DiagStaticInitMarker above
 	pros::lcd::initialize();
 	pros::lcd::set_text(0, "76076X Overdrive");
 
