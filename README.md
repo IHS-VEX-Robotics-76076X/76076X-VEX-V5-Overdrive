@@ -167,25 +167,60 @@ gear ratio, tracking wheel ports and diameter, all PID gains and
 tolerances, both safety timeouts, the heading correction gain, the drive
 mode (arcade or tank), and the acceleration limit used in drive_distance.
 
-## Building for the robot
+## Getting the code onto the brain
 
-- Install the PROS toolchain and CLI per the [PROS documentation](https://pros.cs.purdue.edu/).
-- Ensure `arm-none-eabi-gcc` and Newlib headers are on your `PATH`.
-- From the project root run:
+Works the same on Windows and macOS.
 
-```bash
-pros make
-```
+**1. Install PROS.** Easiest way on either platform is the
+[PROS extension for VS Code](https://pros.cs.purdue.edu/v5/getting-started/),
+which installs the CLI *and* a complete ARM toolchain for you. Do this once.
 
-### Common pitfalls on macOS
-
-If `make` fails complaining about missing `stdint.h` or other headers, ensure
-an arm-none-eabi toolchain with newlib is installed:
+**2. Get the code.**
 
 ```bash
-brew tap ArmMbed/homebrew-formulae
-brew install arm-none-eabi-gcc
+git clone https://github.com/IHS-VEX-Robotics-76076X/76076X-VEX-V5-Overdrive.git
 ```
+
+**3. Build and upload.** All the commands run from inside the project folder,
+not the top of the repo. The folder name has spaces in it, so it needs quotes:
+
+```bash
+cd "76076X VEX V5"
+```
+
+Then plug the brain in over USB, turn it on, and:
+
+```bash
+pros mu
+```
+
+`pros mu` is "make upload" - it builds and uploads in one step. Or use the
+PROS sidebar in VS Code, which has buttons for the same thing.
+
+Once it's uploaded, run the program from the brain screen. It goes straight
+into driver control.
+
+### If the build fails
+
+**"cannot find -lstdc++" or a missing `stdint.h` / `cerrno`** means the ARM
+toolchain on your PATH is incomplete - it has the compiler but not the
+standard library. On macOS this is what you get from Homebrew's
+`arm-none-eabi-gcc` formula, which ships neither newlib nor libstdc++.
+
+Do NOT try to fix it by hand-writing the missing headers. There used to be an
+`include/stubs/` folder in this repo doing exactly that, and it broke the
+build worse than the problem it was papering over.
+
+Install a complete toolchain instead. The PROS VS Code extension bundles one,
+and the `Makefile` picks it up automatically on macOS. To point at a different
+one, set `PROS_TOOLCHAIN` to its directory - that always wins:
+
+```bash
+PROS_TOOLCHAIN=/path/to/toolchain pros make
+```
+
+**Red squiggles in `include/host/pros_mock.hpp`** are safe to ignore. That
+file is only used by the laptop tests and is never compiled for the brain.
 
 ## Building and running the host tests
 
