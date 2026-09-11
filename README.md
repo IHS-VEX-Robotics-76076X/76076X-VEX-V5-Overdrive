@@ -352,8 +352,8 @@ sites in `main.cpp`:
 | **Right stick** left / right | Turn left / right |
 | **L1** | Cascade lift up |
 | **L2** | Cascade lift down |
-| **X** | Intake in |
-| **B** | Intake out (clears jams) |
+| **R1** | Intake in |
+| **R2** | Intake out (clears jams) |
 
 The lift holds its position wherever you let go of the button - it doesn't
 sag. Holding L1 and L2 together cancels out to no movement.
