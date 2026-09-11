@@ -23,12 +23,25 @@
 // waiting.
 constexpr bool AUTON_ENABLED = false;
 
-// Driver control style. ARCADE: one stick (left Y = forward, left X = turn).
-// TANK: two sticks (left Y = left side, right Y = right side). This is a tank
-// drivetrain (2 motors/side, no mecanum) - "arcade" here still means single-
-// stick turning, not strafing.
-enum class DriveMode { ARCADE, TANK };
-constexpr DriveMode DEFAULT_DRIVE_MODE = DriveMode::ARCADE;
+// ---------------------------------------------------------------------------
+// DRIVER CONTROL STYLE
+// ---------------------------------------------------------------------------
+//
+//   SPLIT_ARCADE  Left stick Y drives forward/backward.
+//                 Right stick X turns left/right.
+//                 One job per thumb, which is why most drivers prefer it.
+//
+//   ARCADE        Left stick does both: Y drives, X turns.
+//                 Right stick unused.
+//
+//   TANK          Left stick Y drives the left wheels, right stick Y drives
+//                 the right wheels. Turning means pushing the sticks by
+//                 different amounts.
+//
+// This is a tank DRIVETRAIN either way - the wheels only spin forward and
+// backward, so "turn" always means rotating, never sliding sideways.
+enum class DriveMode { SPLIT_ARCADE, ARCADE, TANK };
+constexpr DriveMode DEFAULT_DRIVE_MODE = DriveMode::SPLIT_ARCADE;
 
 // ---------------------------------------------------------------------------
 // MOTOR GEAR CARTRIDGES
@@ -106,17 +119,31 @@ constexpr double TICKS_PER_INCH = (TICKS_PER_REV * GEAR_RATIO) / (WHEEL_DIAMETER
 // it." Whether a side needs that depends purely on how the motors are
 // physically bolted to the robot.
 //
-// On THIS robot both sides already turn the same way for the same command -
-// forward on the left is forward on the right - so neither side needs
-// flipping and all four ports are positive.
+// MEASURED ON THIS ROBOT: given the same forward command, the two FRONT
+// motors spin forward but the two BACK motors spin backward. The back pair is
+// physically mounted the opposite way round from the front pair.
 //
-// HOW TO CHECK ON THE ROBOT: push the left stick forward.
-//   - Robot drives forward       -> correct, nothing to change
-//   - Robot drives backward      -> negate ALL four ports
-//   - Robot spins instead of
-//     driving straight           -> negate just ONE side
-constexpr std::array<std::int8_t, 2> LEFT_DRIVE_PORTS = {1, 2};
-constexpr std::array<std::int8_t, 2> RIGHT_DRIVE_PORTS = {3, 4};
+// So the back motors - and only the back motors - get negated. Front stays
+// positive on both sides. Without this the front and back wheels on each side
+// fight each other, and the robot grinds in place instead of driving.
+//
+//   Port  1  left front   forward already -> positive
+//   Port -2  left back    runs backward   -> NEGATED
+//   Port  3  right front  forward already -> positive
+//   Port -4  right back   runs backward   -> NEGATED
+//
+// Negating the port (rather than flipping the sign in the driving code) also
+// flips what the encoder reports, which keeps drive_distance() and odometry
+// measuring real forward travel instead of two wheels cancelling out.
+//
+// HOW TO RE-CHECK AFTER REWIRING: push the left stick forward.
+//   - Drives forward         -> correct
+//   - Drives backward        -> negate all four
+//   - Spins in place         -> one whole side is backwards, negate that side
+//   - Grinds / barely moves  -> a front and back on the same side are
+//                               fighting; negate whichever one runs backward
+constexpr std::array<std::int8_t, 2> LEFT_DRIVE_PORTS = {1, -2};
+constexpr std::array<std::int8_t, 2> RIGHT_DRIVE_PORTS = {3, -4};
 
 // ---------------------------------------------------------------------------
 // MECHANISM PORTS
@@ -135,6 +162,33 @@ constexpr std::array<std::int8_t, 2> CASCADE_MOTOR_PORTS = {5, -6};
 // Single-motor mechanisms.
 constexpr std::int8_t INTAKE_MOTOR_PORT = 7;
 constexpr std::int8_t ARM_MOTOR_PORT    = 8;
+
+// ---------------------------------------------------------------------------
+// WHICH SENSORS ARE ACTUALLY INSTALLED
+// ---------------------------------------------------------------------------
+//
+// Flip these to true as the sensors physically go on the robot. Everything
+// adapts automatically - no other file needs editing.
+//
+// Neither is fitted yet, so both are false. What that costs you:
+//
+//   WORKS WITHOUT EITHER SENSOR
+//     - all of driver control
+//     - drive_distance(), because it counts the drive motors' own encoders
+//
+//   NEEDS THE IMU
+//     - turn_degrees() and swing_turn(), which steer by measured angle
+//     - position tracking, and drive_to_point()/follow_path() built on it
+//
+// Anything unavailable stops the motors and returns instead of running on
+// garbage readings, so calling it is safe - it just won't do anything.
+//
+// The tracking wheel is a pure upgrade rather than a requirement: position
+// tracking falls back to the drive encoders without it. Those slip under
+// hard acceleration, so the wheel makes tracking more accurate, but nothing
+// stops working if it's absent.
+constexpr bool HAS_INERTIAL_SENSOR = false;
+constexpr bool HAS_TRACKING_WHEEL  = false;
 
 // Sensors.
 constexpr std::uint8_t INERTIAL_SENSOR_PORT = 11; // the IMU / gyro

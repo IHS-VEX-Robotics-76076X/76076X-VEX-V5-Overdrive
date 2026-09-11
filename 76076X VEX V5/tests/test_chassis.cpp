@@ -791,6 +791,74 @@ static void test_drive_stall_exits_early() {
 // discovering it on a field.
 //
 // Delete or invert this test at the same time you enable auton for real.
+// On this robot the two BACK drive motors are mounted the opposite way round
+// from the front pair, so a raw forward voltage spins them backward. The fix
+// is negating their ports in config.hpp, which makes PROS flip both the
+// voltage sent AND the encoder reading returned.
+//
+// This test drives the REAL config.hpp ports through the mock (which models
+// that flip the same way real hardware does) and checks two things:
+//   1. every physical wheel rolls forward on a forward command - the reversed
+//      motors receive inverted voltage, so the wheel itself goes forward
+//   2. every encoder reports a POSITIVE count afterward - so drive_distance()
+//      and odometry, which average the encoders, see real forward travel
+//      instead of the reversed motors cancelling the others out
+//
+// Without the negation, (1) fails: two wheels go backward and the robot
+// grinds in place. Get the negation right but forget the encoder flip and
+// (2) fails: the robot moves but thinks it went nowhere.
+static void test_reversed_back_motors_all_drive_forward() {
+    std::cout << "[test] reversed back motors: forward command rolls every wheel forward\n";
+
+    // First, the config itself: front positive, back negative, both sides.
+    // This pins the actual numbers in config.hpp so a well-meaning "cleanup"
+    // that strips the minus signs fails here instead of on the robot.
+    std::cout << "  config.hpp: left {" << (int)LEFT_DRIVE_PORTS[0] << "," << (int)LEFT_DRIVE_PORTS[1]
+              << "} right {" << (int)RIGHT_DRIVE_PORTS[0] << "," << (int)RIGHT_DRIVE_PORTS[1] << "}\n";
+    assert(LEFT_DRIVE_PORTS[0] > 0 && LEFT_DRIVE_PORTS[1] < 0 && "left: front +, back -");
+    assert(RIGHT_DRIVE_PORTS[0] > 0 && RIGHT_DRIVE_PORTS[1] < 0 && "right: front +, back -");
+
+    // Now the mechanism, on its own ports. The mock's motors are shared global
+    // state, and ports 1-4 are already driven by earlier tests, so reusing
+    // them here would read back their leftover positions. Same sign pattern
+    // as the real config, just on ports nothing else touches.
+    const std::vector<std::int8_t> left  = {110, -111};
+    const std::vector<std::int8_t> right = {112, -113};
+
+    // The physics of THIS robot: the back motor of each pair is bolted on
+    // backwards, so a positive physical voltage rolls that wheel backward.
+    auto wheel_direction = [](int absPort, int physicalVoltage) {
+        bool mountedBackwards = (absPort == 111 || absPort == 113);
+        return mountedBackwards ? -physicalVoltage : physicalVoltage;
+    };
+
+    PID drivePid(0.5, 0.0, 0.0);
+    PID turnPid(1.0, 0.0, 0.0);
+    Chassis robot(left, right, drivePid, turnPid);
+
+    // (1) every wheel physically rolls forward on a forward command
+    robot.drive(100, 100);
+    for (auto p : {left[0], left[1], right[0], right[1]}) {
+        int absPort = p < 0 ? -p : p;
+        int wheel = wheel_direction(absPort, pros::host_get_motor_voltage(absPort));
+        std::cout << "  port " << static_cast<int>(p) << " -> wheel "
+                  << (wheel > 0 ? "forward" : "BACKWARD") << "\n";
+        assert(wheel > 0);
+    }
+
+    // (2) drive_distance() sees forward travel - the reversed motor's encoder
+    // is flipped too, so it agrees with its partner instead of cancelling it
+    robot.drive_distance(10.0);
+    double target = 10.0 * TICKS_PER_INCH;
+    pros::MotorGroup leftGroup(left); // read through a group so the flip applies
+    auto pos = leftGroup.get_position_all();
+    std::cout << "  after drive_distance(10): left encoders " << pos[0] << ", " << pos[1]
+              << " (expect both ~" << target << ", positive, equal)\n";
+    assert(pos[0] > 0 && pos[1] > 0);
+    assert(std::abs(pos[0] - pos[1]) < 1.0 && "front and back must agree, not cancel");
+    assert(std::abs(pos[0] - target) < DISTANCE_TOLERANCE_TICKS);
+}
+
 static void test_auton_is_disabled_while_routines_are_placeholders() {
     std::cout << "[test] autonomous is disabled (placeholder routines must not run)\n";
 
@@ -809,6 +877,7 @@ int main() {
     test_turn_functions_stop_motors_even_without_an_imu();
     test_drive_and_turn_timeout_when_gains_never_converge();
     test_odometry_tracks_straight_line_drive();
+    test_reversed_back_motors_all_drive_forward();
     test_auton_is_disabled_while_routines_are_placeholders();
     test_ticks_per_rev_matches_cartridge_color();
     test_tracking_wheel_odometry_pure_forward();

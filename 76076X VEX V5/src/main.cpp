@@ -5,17 +5,6 @@
 
 #include <vector>
 #include <atomic>
-#include <cstdio>
-
-// TEMPORARY STARTUP DIAGNOSTIC - remove once the "no LCD output, no drive"
-// issue is root-caused. Prints to the PROS terminal (`pros terminal`) at two
-// checkpoints so we can tell whether the program is dying/hanging during
-// global static initialization (before DIAG_STATIC_INIT prints) or somewhere
-// inside initialize() (after it, before DIAG_INIT_REACHED prints).
-struct DiagStaticInitMarker {
-    DiagStaticInitMarker() { std::printf("DIAG: static init started\n"); }
-};
-static DiagStaticInitMarker diag_static_init_marker;
 
 void red_close_side();
 void red_far_side();
@@ -73,10 +62,15 @@ pros::Imu inertial_sensor(INERTIAL_SENSOR_PORT);    // which way we're facing
 pros::Rotation tracking_wheel(TRACKING_WHEEL_PORT); // how far we've travelled
 
 // The drivetrain: 4 motors, 2 per side, plus the IMU and both PID tunings.
+//
+// The IMU is handed over as nullptr when HAS_INERTIAL_SENSOR is false. That
+// is what makes the chassis behave correctly without one: turn_degrees() and
+// swing_turn() stop the motors and return, and start_odometry() doesn't spawn
+// a task that would spin forever reading a sensor that isn't there.
 Chassis myRobot(
     std::vector<std::int8_t>(LEFT_DRIVE_PORTS.begin(), LEFT_DRIVE_PORTS.end()),
     std::vector<std::int8_t>(RIGHT_DRIVE_PORTS.begin(), RIGHT_DRIVE_PORTS.end()),
-    &inertial_sensor,
+    HAS_INERTIAL_SENSOR ? &inertial_sensor : nullptr,
     PID(DEFAULT_DRIVE_KP, DEFAULT_DRIVE_KI, DEFAULT_DRIVE_KD,
         DEFAULT_DRIVE_INTEGRAL_CAP, DEFAULT_DRIVE_SETTLE_ERROR, DEFAULT_DRIVE_SETTLE_VELOCITY),
     PID(DEFAULT_TURN_KP, DEFAULT_TURN_KI, DEFAULT_TURN_KD,
@@ -109,7 +103,6 @@ void on_center_button() {
  * to keep execution time for this mode under a few seconds.
  */
 void initialize() {
-	std::printf("DIAG: initialize() reached\n"); // TEMPORARY - see DiagStaticInitMarker above
 	pros::lcd::initialize();
 	pros::lcd::set_text(0, "76076X Overdrive");
 
@@ -118,7 +111,11 @@ void initialize() {
 	// competition_initialize() are never called at all. That makes this
 	// function the only thing standing between hitting Run and driving, so
 	// anything slow in here is dead time you have to sit through.
-	if (inertial_sensor.is_installed()) {
+	// Two separate checks here. HAS_INERTIAL_SENSOR is what config.hpp SAYS
+	// we have; is_installed() is what's ACTUALLY plugged in right now. Only
+	// calibrate when both agree, so a loose cable at boot can't stall startup
+	// for 3 seconds waiting on a sensor that isn't answering.
+	if (HAS_INERTIAL_SENSOR && inertial_sensor.is_installed()) {
 		pros::lcd::set_text(1, "Calibrating IMU (~2s)...");
 
 		// Blocks until calibration finishes (3s timeout). The IMU's
@@ -127,10 +124,10 @@ void initialize() {
 		inertial_sensor.reset(true);
 		pros::lcd::set_text(1, "READY - driver control");
 	} else {
-		// No IMU plugged in. Normal when bench-testing just the drivetrain, so
-		// skip calibration rather than stalling on a device that isn't there.
-		// Driving still works. Turning and position tracking do not, and they
-		// no-op safely rather than misbehaving.
+		// No IMU - either not fitted yet (config.hpp) or not plugged in. Skip
+		// calibration rather than stalling on it. Driving still works.
+		// Turning and position tracking do not, and they no-op safely rather
+		// than misbehaving.
 		pros::lcd::set_text(1, "READY - no IMU, drive only");
 	}
 
@@ -146,8 +143,16 @@ void initialize() {
 	// Hand the tracking wheel over, THEN start position tracking. Order
 	// matters: if start_odometry() runs first, odometry comes up using the
 	// drive motor encoders instead of the tracking wheel.
-	myRobot.set_tracking_wheel(&tracking_wheel, TRACKING_WHEEL_DIAMETER_INCH);
-	myRobot.start_odometry();
+	//
+	// Both are gated on config.hpp. With no tracking wheel, odometry uses the
+	// drive encoders. With no IMU, start_odometry() is a no-op anyway (the
+	// chassis was built with a nullptr IMU), so this is belt-and-braces.
+	if (HAS_TRACKING_WHEEL) {
+		myRobot.set_tracking_wheel(&tracking_wheel, TRACKING_WHEEL_DIAMETER_INCH);
+	}
+	if (HAS_INERTIAL_SENSOR) {
+		myRobot.start_odometry();
+	}
 
 	// Report the auton state here too, not just in competition_initialize().
 	// That function only runs when field control is attached, so on a bare
@@ -222,6 +227,12 @@ void autonomous() {
 	// then let the driver take over. The routines in autonomous.cpp are only
 	// placeholders that drive blindly forward, so running them on a real field
 	// would just push the robot into whatever happens to be in front of it.
+	//
+	// Stopping the motors and returning is all that's needed. The 15 second
+	// autonomous period is timed by the field, not by us - when it ends, the
+	// field kills this task and starts opcontrol(), whether or not this
+	// function has returned. Returning early just means the robot sits idle
+	// for the remainder. There's nothing to count down here.
 	//
 	// stop() rather than an empty body, so that if anything was left moving
 	// before autonomous started, it gets shut off here.
