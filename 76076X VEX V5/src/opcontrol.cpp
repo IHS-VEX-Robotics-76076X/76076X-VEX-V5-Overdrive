@@ -41,47 +41,100 @@ static void update_status_display(pros::Controller &master) {
     pros::lcd::set_text(2, buf);
 }
 
+// ---------------------------------------------------------------------------
+// MECHANISMS
+//
+// One function per mechanism, each called once per loop. Keeping them
+// separate means you can retune or rebind a mechanism without reading past
+// the other three, and autonomous can call the same function rather than
+// duplicating the motor commands.
+// ---------------------------------------------------------------------------
+
+// Cascade lift: L1 raises, L2 lowers.
+//
+// TWO motors, one on each side of the lift, driven as a single group so they
+// physically cannot get out of sync. One of the two ports is negated in
+// config.hpp because the motors face opposite directions - without that they
+// would push against each other and stall instead of lifting.
+//
+// Holding both buttons cancels to 0, which is the sane result.
+void run_cascade(pros::Controller &master) {
+    int speed = 0;
+    if (master.get_digital(E_CONTROLLER_DIGITAL_L1)) speed += 127;
+    if (master.get_digital(E_CONTROLLER_DIGITAL_L2)) speed -= 127;
+    cascade_motors.move(speed);
+}
+
+// Arm: R1 raises, R2 lowers.
+void run_arm(pros::Controller &master) {
+    int speed = 0;
+    if (master.get_digital(E_CONTROLLER_DIGITAL_R1)) speed += 127;
+    if (master.get_digital(E_CONTROLLER_DIGITAL_R2)) speed -= 127;
+    arm_motor.move(speed);
+}
+
+// Intake: X pulls in, B spits out.
+//
+// Reverse matters as much as forward - it's how you clear a jam without
+// having to stop and dig something out by hand mid-match.
+void run_intake(pros::Controller &master) {
+    int speed = 0;
+    if (master.get_digital(E_CONTROLLER_DIGITAL_X)) speed = 127;
+    else if (master.get_digital(E_CONTROLLER_DIGITAL_B)) speed = -127;
+    intake_motor.move(speed);
+}
+
 void opcontrol() {
     pros::Controller master(pros::E_CONTROLLER_MASTER);
     int prevLeft = 0;
     int prevRight = 0;
 
     while (true) {
+        // Reads one joystick axis and cleans it up:
+        //   deadband - a released stick rarely sits at exactly 0, so ignore
+        //              tiny readings or the robot creeps on its own
+        //   expo     - softens the middle of the stick travel for fine
+        //              control, while full push still gives full power
+        // Generic parameter because the real PROS API takes a strongly typed
+        // enum here while the host mock takes an int - `auto` accepts both.
+        auto axis = [&master](auto channel) {
+            return util::expo(util::deadband(static_cast<int>(master.get_analog(channel))),
+                              OPCONTROL_EXPO_GAIN);
+        };
+
         int targetLeft = 0;
         int targetRight = 0;
-        if constexpr (DEFAULT_DRIVE_MODE == DriveMode::ARCADE) {
-            int forward = util::expo(util::deadband(static_cast<int>(master.get_analog(ANALOG_LEFT_Y))), OPCONTROL_EXPO_GAIN);
-            int turn = util::expo(util::deadband(static_cast<int>(master.get_analog(ANALOG_LEFT_X))), OPCONTROL_EXPO_GAIN);
+
+        if constexpr (DEFAULT_DRIVE_MODE == DriveMode::SPLIT_ARCADE) {
+            // Drive with the LEFT stick, steer with the RIGHT stick.
+            //
+            // Adding the turn to one side and subtracting it from the other is
+            // what rotates the robot: pushing the right stick left makes the
+            // left wheels slower (or reverse) and the right wheels faster, so
+            // the robot swings left.
+            int forward = axis(ANALOG_LEFT_Y);
+            int turn = axis(ANALOG_RIGHT_X);
+            targetLeft = forward + turn;
+            targetRight = forward - turn;
+        } else if constexpr (DEFAULT_DRIVE_MODE == DriveMode::ARCADE) {
+            // Same mixing, but both axes come off the left stick.
+            int forward = axis(ANALOG_LEFT_Y);
+            int turn = axis(ANALOG_LEFT_X);
             targetLeft = forward + turn;
             targetRight = forward - turn;
         } else {
-            targetLeft = util::expo(util::deadband(static_cast<int>(master.get_analog(ANALOG_LEFT_Y))), OPCONTROL_EXPO_GAIN);
-            targetRight = util::expo(util::deadband(static_cast<int>(master.get_analog(ANALOG_RIGHT_Y))), OPCONTROL_EXPO_GAIN);
+            // Tank: one stick per side, no mixing.
+            targetLeft = axis(ANALOG_LEFT_Y);
+            targetRight = axis(ANALOG_RIGHT_Y);
         }
         // slew: tall Override stacks tip if the base jerks at full voltage
         prevLeft = util::slew(prevLeft, targetLeft, OPCONTROL_SLEW_PER_LOOP);
         prevRight = util::slew(prevRight, targetRight, OPCONTROL_SLEW_PER_LOOP);
         myRobot.drive(prevLeft, prevRight);
 
-        // cascade lift: L1 up / L2 down. Holding both cancels out to 0, which
-        // is what we want. Both lift motors move together as one group.
-        int cascadeSpeed = 0;
-        if (master.get_digital(E_CONTROLLER_DIGITAL_L1)) cascadeSpeed += 127;
-        if (master.get_digital(E_CONTROLLER_DIGITAL_L2)) cascadeSpeed -= 127;
-        cascade_motors.move(cascadeSpeed);
-
-        // arm: R1 up / R2 down.
-        int armSpeed = 0;
-        if (master.get_digital(E_CONTROLLER_DIGITAL_R1)) armSpeed += 127;
-        if (master.get_digital(E_CONTROLLER_DIGITAL_R2)) armSpeed -= 127;
-        arm_motor.move(armSpeed);
-
-        // intake: X in / B out (reverse clears jams and fixes cup orientation
-        // for SC3 - opaque vs transparent matters for yellow scoring).
-        int intakeSpeed = 0;
-        if (master.get_digital(E_CONTROLLER_DIGITAL_X)) intakeSpeed = 127;
-        else if (master.get_digital(E_CONTROLLER_DIGITAL_B)) intakeSpeed = -127;
-        intake_motor.move(intakeSpeed);
+        run_cascade(master);
+        run_arm(master);
+        run_intake(master);
 
         update_status_display(master);
 

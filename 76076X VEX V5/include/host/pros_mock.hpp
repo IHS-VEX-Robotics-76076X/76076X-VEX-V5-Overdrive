@@ -180,29 +180,30 @@ class Motor {
         MotorGears gearset;
 };
 
+// Models how real PROS treats a NEGATIVE port number: the motor is
+// "reversed", meaning the voltage it's sent is flipped AND the encoder
+// reading it reports back is flipped. Both flips matter - together they make
+// "positive command = forward, positive encoder = forward" hold for every
+// motor regardless of how it's physically bolted on, which is the whole point
+// of the convention.
+//
+// Internally each motor lives under its absolute port number (the physical
+// motor is the same object whether you address it as 2 or -2); the sign is
+// tracked per group entry and applied on the way in and on the way out.
 class MotorGroup {
     public:
         MotorGroup(std::initializer_list<std::int8_t> ports,
                    MotorGears gearset = MotorGears::invalid)
-            : gearset_(gearset) {
-            for (auto p : ports) {
-                ports_.push_back(static_cast<int>(p));
-                if (!has_motor(static_cast<int>(p))) create_motor(static_cast<int>(p));
-            }
-        }
+            : gearset_(gearset) { add_ports(ports.begin(), ports.end()); }
         MotorGroup(const std::vector<std::int8_t>& ports,
                    MotorGears gearset = MotorGears::invalid)
-            : gearset_(gearset) {
-            for (auto p : ports) {
-                ports_.push_back(static_cast<int>(p));
-                if (!has_motor(static_cast<int>(p))) create_motor(static_cast<int>(p));
-            }
-        }
-        MotorGroup(Motor &m) { ports_.push_back(0); if (!has_motor(0)) create_motor(0); }
+            : gearset_(gearset) { add_ports(ports.begin(), ports.end()); }
+        MotorGroup(Motor &m) { ports_.push_back(0); signs_.push_back(1); if (!has_motor(0)) create_motor(0); }
         void move(int v) const {
-            for (int p : ports_) {
-                host_set_motor_voltage(p, v);
-                host_increment_motor_position(p, v * 0.1);
+            for (std::size_t i = 0; i < ports_.size(); i++) {
+                int physical = signs_[i] * v; // reversed motor gets the opposite voltage
+                host_set_motor_voltage(ports_[i], physical);
+                host_increment_motor_position(ports_[i], physical * 0.1);
             }
         }
         void move_velocity(int v) const { move(v); }
@@ -211,7 +212,11 @@ class MotorGroup {
         }
         std::vector<double> get_position_all() const {
             std::vector<double> out;
-            for (int p : ports_) out.push_back(host_get_motor_position(p));
+            for (std::size_t i = 0; i < ports_.size(); i++) {
+                // Reversed motor reports its encoder flipped too, so driving
+                // "forward" reads as a positive count on every motor.
+                out.push_back(signs_[i] * host_get_motor_position(ports_[i]));
+            }
             return out;
         }
         void set_brake_mode_all(int mode) const { /* no motor dynamics to brake in the host mock */ }
@@ -223,7 +228,17 @@ class MotorGroup {
         }
         std::int32_t set_gearing_all(MotorGears g) { gearset_ = g; return 1; }
     private:
-        std::vector<int> ports_;
+        template <class It>
+        void add_ports(It first, It last) {
+            for (; first != last; ++first) {
+                int p = static_cast<int>(*first);
+                ports_.push_back(p < 0 ? -p : p);   // physical motor = absolute port
+                signs_.push_back(p < 0 ? -1 : 1);   // negative port = reversed
+                if (!has_motor(ports_.back())) create_motor(ports_.back());
+            }
+        }
+        std::vector<int> ports_;  // absolute port numbers
+        std::vector<int> signs_;  // +1 normal, -1 reversed, parallel to ports_
         MotorGears gearset_ = MotorGears::invalid;
 };
 
