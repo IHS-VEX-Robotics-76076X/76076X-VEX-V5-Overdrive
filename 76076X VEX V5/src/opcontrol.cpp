@@ -68,14 +68,18 @@ void run_cascade(pros::Controller &master) {
     cascade_motors.move(speed);
 }
 
-// Intake: X pulls in, B spits out.
+// Intake: R1 pulls in, R2 spits out.
+//
+// Mirrors the lift on the other hand - L1/L2 for the cascade, R1/R2 for the
+// intake - so both mechanisms live on the shoulder buttons and the driver's
+// thumbs stay on the sticks.
 //
 // Reverse matters as much as forward - it's how you clear a jam without
 // having to stop and dig something out by hand mid-match.
 void run_intake(pros::Controller &master) {
     int speed = 0;
-    if (master.get_digital(E_CONTROLLER_DIGITAL_X)) speed = 127;
-    else if (master.get_digital(E_CONTROLLER_DIGITAL_B)) speed = -127;
+    if (master.get_digital(E_CONTROLLER_DIGITAL_R1)) speed = 127;
+    else if (master.get_digital(E_CONTROLLER_DIGITAL_R2)) speed = -127;
     intake_motor.move(speed);
 }
 
