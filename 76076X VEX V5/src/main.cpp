@@ -53,9 +53,8 @@ pros::MotorGroup cascade_motors(
     std::vector<std::int8_t>(CASCADE_MOTOR_PORTS.begin(), CASCADE_MOTOR_PORTS.end()),
     CASCADE_MOTOR_GEARSET);
 
-// Single-motor mechanisms.
+// Intake.
 pros::Motor intake_motor(INTAKE_MOTOR_PORT, INTAKE_MOTOR_GEARSET);
-pros::Motor arm_motor(ARM_MOTOR_PORT, ARM_MOTOR_GEARSET);
 
 // Sensors.
 pros::Imu inertial_sensor(INERTIAL_SENSOR_PORT);    // which way we're facing
@@ -133,11 +132,11 @@ void initialize() {
 
 	pros::lcd::register_btn1_cb(on_center_button);
 
-	// The lift and arm must hold position against gravity when stopped, so
-	// they use HOLD. The intake has nothing to hold up and just needs to stop
-	// cleanly, so BRAKE is enough.
+	// The lift must hold position against gravity when stopped, so it uses
+	// HOLD - that's what lets you pause it partway up and have it stay there
+	// instead of sinking. The intake has nothing to hold up and just needs
+	// to stop cleanly, so BRAKE is enough.
 	cascade_motors.set_brake_mode_all(E_MOTOR_BRAKE_HOLD);
-	arm_motor.set_brake_mode(E_MOTOR_BRAKE_HOLD);
 	intake_motor.set_brake_mode(E_MOTOR_BRAKE_BRAKE);
 
 	// Hand the tracking wheel over, THEN start position tracking. Order

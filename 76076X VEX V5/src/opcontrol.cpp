@@ -1,6 +1,6 @@
 /**
- * Driver control: drivetrain (arcade or tank, see DEFAULT_DRIVE_MODE in
- * config.hpp) plus the cascade/arm/clamp/intake mechanisms.
+ * Driver control: drivetrain (see DEFAULT_DRIVE_MODE in config.hpp) plus the
+ * cascade lift and intake.
  */
 
 #include "main.h"
@@ -15,7 +15,6 @@
 extern Chassis myRobot;
 extern pros::MotorGroup cascade_motors;
 extern pros::Motor intake_motor;
-extern pros::Motor arm_motor;
 extern std::atomic<bool> show_status; // toggled by the LCD center button (see main.cpp)
 
 // Shows robot battery %, controller connection, and any drivetrain/mechanism
@@ -26,8 +25,7 @@ static void update_status_display(pros::Controller &master) {
     // A non-zero fault value means a motor is overheating, drawing too much
     // current, or reporting a driver fault.
     bool fault = myRobot.has_fault()
-        || intake_motor.get_faults() != 0
-        || arm_motor.get_faults() != 0;
+        || intake_motor.get_faults() != 0;
 
     for (auto flags : cascade_motors.get_faults_all()) {
         if (flags != 0) { fault = true; break; }
@@ -45,17 +43,22 @@ static void update_status_display(pros::Controller &master) {
 // MECHANISMS
 //
 // One function per mechanism, each called once per loop. Keeping them
-// separate means you can retune or rebind a mechanism without reading past
-// the other three, and autonomous can call the same function rather than
-// duplicating the motor commands.
+// separate means you can retune or rebind one without reading past the
+// other, and autonomous can call the same function rather than duplicating
+// the motor commands.
 // ---------------------------------------------------------------------------
 
-// Cascade lift: L1 raises, L2 lowers.
+// Cascade lift: L1 raises, L2 lowers. Let go and it holds where it is.
 //
 // TWO motors, one on each side of the lift, driven as a single group so they
 // physically cannot get out of sync. One of the two ports is negated in
 // config.hpp because the motors face opposite directions - without that they
 // would push against each other and stall instead of lifting.
+//
+// It's one continuous mechanism from bottom to top: hold L1 and it keeps
+// rising, release and it stops. Because the brake mode is HOLD (set in
+// initialize()), "stops" means it actively holds that height rather than
+// sagging back down under its own weight - so you can pause it anywhere.
 //
 // Holding both buttons cancels to 0, which is the sane result.
 void run_cascade(pros::Controller &master) {
@@ -63,14 +66,6 @@ void run_cascade(pros::Controller &master) {
     if (master.get_digital(E_CONTROLLER_DIGITAL_L1)) speed += 127;
     if (master.get_digital(E_CONTROLLER_DIGITAL_L2)) speed -= 127;
     cascade_motors.move(speed);
-}
-
-// Arm: R1 raises, R2 lowers.
-void run_arm(pros::Controller &master) {
-    int speed = 0;
-    if (master.get_digital(E_CONTROLLER_DIGITAL_R1)) speed += 127;
-    if (master.get_digital(E_CONTROLLER_DIGITAL_R2)) speed -= 127;
-    arm_motor.move(speed);
 }
 
 // Intake: X pulls in, B spits out.
@@ -133,7 +128,6 @@ void opcontrol() {
         myRobot.drive(prevLeft, prevRight);
 
         run_cascade(master);
-        run_arm(master);
         run_intake(master);
 
         update_status_display(master);
