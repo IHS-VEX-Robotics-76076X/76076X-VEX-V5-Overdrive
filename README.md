@@ -344,6 +344,39 @@ sites in `main.cpp`:
 - `DEFAULT_HEADING_KP` - heading-hold correction gain for `drive_distance`.
 - `DRIVE_MAX_ACCEL_PER_LOOP` - motion-profiling accel limit for `drive_distance`.
 
+## Controller
+
+| Input | Does |
+|---|---|
+| **Left stick** up / down | Drive forward / backward |
+| **Right stick** left / right | Turn left / right |
+| **L1** | Cascade lift up |
+| **L2** | Cascade lift down |
+| **X** | Intake in |
+| **B** | Intake out (clears jams) |
+
+The lift holds its position wherever you let go of the button - it doesn't
+sag. Holding L1 and L2 together cancels out to no movement.
+
+Driving is split arcade by default. `DEFAULT_DRIVE_MODE` in `config.hpp`
+switches it to single-stick arcade or tank.
+
+## Motor ports
+
+| Port | Motor | Cartridge |
+|:---:|---|---|
+| 1 | Left front drive | Blue |
+| 2 | Left back drive | Blue |
+| 3 | Right front drive | Blue |
+| 4 | Right back drive | Blue |
+| 5 | Cascade lift | Green |
+| 6 | Cascade lift (reversed) | Green |
+| 7 | Intake | Blue |
+
+Ports 11 (IMU) and 12 (tracking wheel) are reserved in `config.hpp` but
+neither sensor is fitted yet - `HAS_INERTIAL_SENSOR` and
+`HAS_TRACKING_WHEEL` are both `false`.
+
 ## On the LCD
 
 - **Left/right buttons** (during `competition_initialize`, i.e. before a
@@ -378,7 +411,7 @@ sites in `main.cpp`:
 6. Safety timeouts: `config.hpp`, `DRIVE_TIMEOUT_MS`, `TURN_TIMEOUT_MS` (defaults are reasonable but worth revisiting once real movement speeds are known)
 7. Drive mode / control scheme: `config.hpp`, `DEFAULT_DRIVE_MODE` (arcade vs. tank, a driver preference, not yet decided)
 8. Real autonomous routines: `src/autonomous.cpp`, `red_close_side()` and `blue_far_side()` are explicit placeholders (drive forward/backward 1 second), need the actual game-strategy routines once decided
-9. Opcontrol button mapping for mechanisms: `src/opcontrol.cpp`, cascade/arm/clamp/intake button bindings are a reasonable guess but should be confirmed against actual driver preference/game mechanism design
+9. Opcontrol button mapping: `src/opcontrol.cpp`, cascade/intake bindings are a reasonable guess but should be confirmed with whoever is driving
 10. No mecanum/holonomic support: entire library (`chassis.hpp`/`chassis.cpp`, `opcontrol.cpp`), tank drive only by design, would need new hardware plus a rewrite if the robot ever goes holonomic
 11. No pneumatics/additional-sensor support (e.g. distance, optical, vision): not present anywhere, add if/when that hardware is added
 12. Local ARM toolchain: your machine's `arm-none-eabi-gcc` install is missing newlib headers, so `pros make`/device builds currently fail before even reaching this repo's code, fix is in `README.md`'s "Common pitfalls on macOS" section (`brew install arm-none-eabi-gcc`), this is a machine setup issue, not a code change

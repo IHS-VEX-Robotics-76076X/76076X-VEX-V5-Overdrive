@@ -64,11 +64,10 @@ constexpr DriveMode DEFAULT_DRIVE_MODE = DriveMode::SPLIT_ARCADE;
 //
 // Our robot:
 //   BLUE  - the 4 drivetrain motors and the intake (built for speed)
-//   GREEN - the 2 cascade motors and the arm (built for lifting)
+//   GREEN - the 2 cascade motors (built for lifting)
 constexpr auto DRIVE_MOTOR_GEARSET   = pros::v5::MotorGears::blue;
 constexpr auto INTAKE_MOTOR_GEARSET  = pros::v5::MotorGears::blue;
 constexpr auto CASCADE_MOTOR_GEARSET = pros::v5::MotorGears::green;
-constexpr auto ARM_MOTOR_GEARSET     = pros::v5::MotorGears::green;
 
 // Looks up encoder ticks per motor revolution from the cartridge color, so
 // TICKS_PER_REV can never drift out of sync with the cartridge above.
@@ -146,19 +145,20 @@ constexpr std::array<std::int8_t, 2> RIGHT_DRIVE_PORTS = {3, 4};
 // MECHANISM PORTS
 // ---------------------------------------------------------------------------
 //
-// 8 motors total on this robot:
+// 7 motors total on this robot:
 //   4 drivetrain (above)
 //   2 cascade lift (always move together, so they're one MotorGroup)
 //   1 intake
-//   1 arm
 
-// Cascade lift: 2 motors driven as one unit so they can never fight.
-// One is negated because they face opposite directions on the lift.
+// Cascade lift: 2 motors, one on each side of the lift, driven as one unit
+// so they can never fight. One is negated because they face opposite
+// directions across the lift - same idea as the drive ports above. If the
+// lift stalls or judders instead of rising, the two are fighting: flip the
+// sign on one of them.
 constexpr std::array<std::int8_t, 2> CASCADE_MOTOR_PORTS = {5, -6};
 
-// Single-motor mechanisms.
+// Intake.
 constexpr std::int8_t INTAKE_MOTOR_PORT = 7;
-constexpr std::int8_t ARM_MOTOR_PORT    = 8;
 
 // ---------------------------------------------------------------------------
 // WHICH SENSORS ARE ACTUALLY INSTALLED
@@ -195,11 +195,11 @@ constexpr int WATT_PER_11W_MOTOR = 11;
 constexpr int SUBSYSTEM1_MAX_WATT = 55; // R11a drivetrain cap
 constexpr int ROBOT_MAX_WATT = 88;      // R10a robot total cap
 constexpr int MECHANISM_MOTOR_COUNT =
-    CASCADE_MOTOR_PORTS.size() + 2; // + intake + arm
+    CASCADE_MOTOR_PORTS.size() + 1; // + intake
 static_assert((LEFT_DRIVE_PORTS.size() + RIGHT_DRIVE_PORTS.size()) * WATT_PER_11W_MOTOR <= SUBSYSTEM1_MAX_WATT,
     "Illegal drivetrain: Subsystem 1 exceeds 55W (R11a). Use at most 5x11W, e.g. 4x11W.");
 static_assert((LEFT_DRIVE_PORTS.size() + RIGHT_DRIVE_PORTS.size() + MECHANISM_MOTOR_COUNT) * WATT_PER_11W_MOTOR <= ROBOT_MAX_WATT,
-    "Illegal robot: total exceeds 88W (R10a). Count drive + cascade + intake + arm.");
+    "Illegal robot: total exceeds 88W (R10a). Count drive + cascade + intake.");
 
 // ---------------------------------------------------------------------------
 // TRACKING WHEEL (ODOMETRY) - we have exactly ONE, facing forward
