@@ -791,42 +791,37 @@ static void test_drive_stall_exits_early() {
 // discovering it on a field.
 //
 // Delete or invert this test at the same time you enable auton for real.
-// On this robot the two BACK drive motors are mounted the opposite way round
-// from the front pair, so a raw forward voltage spins them backward. The fix
-// is negating their ports in config.hpp, which makes PROS flip both the
-// voltage sent AND the encoder reading returned.
-//
-// This test drives the REAL config.hpp ports through the mock (which models
-// that flip the same way real hardware does) and checks two things:
-//   1. every physical wheel rolls forward on a forward command - the reversed
-//      motors receive inverted voltage, so the wheel itself goes forward
-//   2. every encoder reports a POSITIVE count afterward - so drive_distance()
-//      and odometry, which average the encoders, see real forward travel
-//      instead of the reversed motors cancelling the others out
-//
-// Without the negation, (1) fails: two wheels go backward and the robot
-// grinds in place. Get the negation right but forget the encoder flip and
-// (2) fails: the robot moves but thinks it went nowhere.
-static void test_reversed_back_motors_all_drive_forward() {
-    std::cout << "[test] reversed back motors: forward command rolls every wheel forward\n";
+// On this robot all four drive motors spin the same way for the same command,
+// so none of the ports are negated. This pins that in config.hpp: if someone
+// adds a minus sign thinking a motor "must" be reversed, this fails on the
+// laptop instead of the robot grinding in place on the field.
+static void test_drive_ports_match_robot_wiring() {
+    std::cout << "[test] drive ports: all four positive (every motor spins the same way)\n";
 
-    // First, the config itself: front positive, back negative, both sides.
-    // This pins the actual numbers in config.hpp so a well-meaning "cleanup"
-    // that strips the minus signs fails here instead of on the robot.
     std::cout << "  config.hpp: left {" << (int)LEFT_DRIVE_PORTS[0] << "," << (int)LEFT_DRIVE_PORTS[1]
               << "} right {" << (int)RIGHT_DRIVE_PORTS[0] << "," << (int)RIGHT_DRIVE_PORTS[1] << "}\n";
-    assert(LEFT_DRIVE_PORTS[0] > 0 && LEFT_DRIVE_PORTS[1] < 0 && "left: front +, back -");
-    assert(RIGHT_DRIVE_PORTS[0] > 0 && RIGHT_DRIVE_PORTS[1] < 0 && "right: front +, back -");
+    for (auto p : LEFT_DRIVE_PORTS)  assert(p > 0 && "left drive ports must all be positive");
+    for (auto p : RIGHT_DRIVE_PORTS) assert(p > 0 && "right drive ports must all be positive");
+}
 
-    // Now the mechanism, on its own ports. The mock's motors are shared global
-    // state, and ports 1-4 are already driven by earlier tests, so reusing
-    // them here would read back their leftover positions. Same sign pattern
-    // as the real config, just on ports nothing else touches.
+// A negative port tells PROS "this motor is mounted backwards": it inverts
+// the voltage sent AND the encoder reading returned. Both halves matter -
+// without the encoder flip, drive_distance() and odometry (which average the
+// encoders) would see a reversed motor cancelling its neighbour and think the
+// robot went nowhere.
+//
+// This robot doesn't currently need any reversed ports, but the mock has to
+// model the flip faithfully for the day it does, and for the cascade motors
+// which already use it. So this checks the mechanism on private ports rather
+// than the real config. (Ports 1-4 are shared global state in the mock and
+// carry leftover positions from earlier tests, hence the high numbers.)
+static void test_negative_port_reverses_voltage_and_encoder() {
+    std::cout << "[test] negative port reverses both voltage and encoder reading\n";
+
+    // Pretend the back motor of each pair is bolted on backwards, so a
+    // positive PHYSICAL voltage rolls that wheel backward.
     const std::vector<std::int8_t> left  = {110, -111};
     const std::vector<std::int8_t> right = {112, -113};
-
-    // The physics of THIS robot: the back motor of each pair is bolted on
-    // backwards, so a positive physical voltage rolls that wheel backward.
     auto wheel_direction = [](int absPort, int physicalVoltage) {
         bool mountedBackwards = (absPort == 111 || absPort == 113);
         return mountedBackwards ? -physicalVoltage : physicalVoltage;
@@ -836,7 +831,8 @@ static void test_reversed_back_motors_all_drive_forward() {
     PID turnPid(1.0, 0.0, 0.0);
     Chassis robot(left, right, drivePid, turnPid);
 
-    // (1) every wheel physically rolls forward on a forward command
+    // (1) voltage flip: the reversed motor gets inverted voltage, so the
+    //     wheel itself still rolls forward
     robot.drive(100, 100);
     for (auto p : {left[0], left[1], right[0], right[1]}) {
         int absPort = p < 0 ? -p : p;
@@ -846,8 +842,8 @@ static void test_reversed_back_motors_all_drive_forward() {
         assert(wheel > 0);
     }
 
-    // (2) drive_distance() sees forward travel - the reversed motor's encoder
-    // is flipped too, so it agrees with its partner instead of cancelling it
+    // (2) encoder flip: the reversed motor's count agrees with its partner
+    //     instead of cancelling it, so drive_distance() measures real travel
     robot.drive_distance(10.0);
     double target = 10.0 * TICKS_PER_INCH;
     pros::MotorGroup leftGroup(left); // read through a group so the flip applies
@@ -877,7 +873,8 @@ int main() {
     test_turn_functions_stop_motors_even_without_an_imu();
     test_drive_and_turn_timeout_when_gains_never_converge();
     test_odometry_tracks_straight_line_drive();
-    test_reversed_back_motors_all_drive_forward();
+    test_drive_ports_match_robot_wiring();
+    test_negative_port_reverses_voltage_and_encoder();
     test_auton_is_disabled_while_routines_are_placeholders();
     test_ticks_per_rev_matches_cartridge_color();
     test_tracking_wheel_odometry_pure_forward();

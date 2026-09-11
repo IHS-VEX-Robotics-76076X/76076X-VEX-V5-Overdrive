@@ -119,22 +119,19 @@ constexpr double TICKS_PER_INCH = (TICKS_PER_REV * GEAR_RATIO) / (WHEEL_DIAMETER
 // it." Whether a side needs that depends purely on how the motors are
 // physically bolted to the robot.
 //
-// MEASURED ON THIS ROBOT: given the same forward command, the two FRONT
-// motors spin forward but the two BACK motors spin backward. The back pair is
-// physically mounted the opposite way round from the front pair.
+// MEASURED ON THIS ROBOT: all four motors spin the same way for the same
+// command. Send "forward" and every wheel rolls forward. So nothing needs
+// flipping, and all four ports are positive.
 //
-// So the back motors - and only the back motors - get negated. Front stays
-// positive on both sides. Without this the front and back wheels on each side
-// fight each other, and the robot grinds in place instead of driving.
+//   Port 1  left front
+//   Port 2  left back
+//   Port 3  right front
+//   Port 4  right back
 //
-//   Port  1  left front   forward already -> positive
-//   Port -2  left back    runs backward   -> NEGATED
-//   Port  3  right front  forward already -> positive
-//   Port -4  right back   runs backward   -> NEGATED
-//
-// Negating the port (rather than flipping the sign in the driving code) also
-// flips what the encoder reports, which keeps drive_distance() and odometry
-// measuring real forward travel instead of two wheels cancelling out.
+// If a motor ever does need flipping, negate its port here rather than
+// changing a sign in the driving code. Negating the port makes PROS flip
+// what the encoder reports too, which keeps drive_distance() and odometry
+// measuring real forward travel instead of one wheel cancelling another.
 //
 // HOW TO RE-CHECK AFTER REWIRING: push the left stick forward.
 //   - Drives forward         -> correct
@@ -142,8 +139,8 @@ constexpr double TICKS_PER_INCH = (TICKS_PER_REV * GEAR_RATIO) / (WHEEL_DIAMETER
 //   - Spins in place         -> one whole side is backwards, negate that side
 //   - Grinds / barely moves  -> a front and back on the same side are
 //                               fighting; negate whichever one runs backward
-constexpr std::array<std::int8_t, 2> LEFT_DRIVE_PORTS = {1, -2};
-constexpr std::array<std::int8_t, 2> RIGHT_DRIVE_PORTS = {3, -4};
+constexpr std::array<std::int8_t, 2> LEFT_DRIVE_PORTS = {1, 2};
+constexpr std::array<std::int8_t, 2> RIGHT_DRIVE_PORTS = {3, 4};
 
 // ---------------------------------------------------------------------------
 // MECHANISM PORTS
