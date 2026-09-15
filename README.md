@@ -365,8 +365,8 @@ switches it to single-stick arcade or tank.
 
 | Port | Motor | Cartridge |
 |:---:|---|---|
-| 1 | Left front drive | Blue |
-| 2 | Left back drive | Blue |
+| 1 | Left front drive (reversed) | Blue |
+| 2 | Left back drive (reversed) | Blue |
 | 3 | Right front drive | Blue |
 | 4 | Right back drive | Blue |
 | 5 | Cascade lift | Green |
