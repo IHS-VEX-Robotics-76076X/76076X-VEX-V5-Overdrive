@@ -118,27 +118,35 @@ constexpr double TICKS_PER_INCH = (TICKS_PER_REV * GEAR_RATIO) / (WHEEL_DIAMETER
 // it." Whether a side needs that depends purely on how the motors are
 // physically bolted to the robot.
 //
-// MEASURED ON THIS ROBOT: all four motors spin the same way for the same
-// command. Send "forward" and every wheel rolls forward. So nothing needs
-// flipping, and all four ports are positive.
+// MEASURED ON THIS ROBOT: with all four ports positive, a forward command
+// drove the RIGHT side forward and the LEFT side backward - the robot spun
+// in place. That's the normal mirrored-drivetrain situation: the motors on
+// the two sides face each other across the chassis, so the same rotation
+// pushes the robot in opposite directions. The left side gets negated.
 //
-//   Port 1  left front
-//   Port 2  left back
-//   Port 3  right front
-//   Port 4  right back
+//   Port -1  left front   (reversed)
+//   Port -2  left back    (reversed)
+//   Port  3  right front
+//   Port  4  right back
 //
-// If a motor ever does need flipping, negate its port here rather than
-// changing a sign in the driving code. Negating the port makes PROS flip
-// what the encoder reports too, which keeps drive_distance() and odometry
-// measuring real forward travel instead of one wheel cancelling another.
+// Why it looked like "all four spin the same way" when tested by hand: they
+// DO all spin the same way. But a motor spinning clockwise on the left side
+// of the robot and a motor spinning clockwise on the right side face
+// opposite directions, so one drives the wheel forward and the other drives
+// it backward. Same rotation, opposite travel. Negating one side fixes it.
+//
+// Negate the port here rather than changing a sign in the driving code.
+// Negating the port makes PROS flip what the encoder reports too, which
+// keeps drive_distance() and odometry measuring real forward travel instead
+// of the two sides cancelling each other out.
 //
 // HOW TO RE-CHECK AFTER REWIRING: push the left stick forward.
 //   - Drives forward         -> correct
-//   - Drives backward        -> negate all four
-//   - Spins in place         -> one whole side is backwards, negate that side
+//   - Drives backward        -> flip the sign on all four
+//   - Spins in place         -> one whole side is backwards, flip that side
 //   - Grinds / barely moves  -> a front and back on the same side are
-//                               fighting; negate whichever one runs backward
-constexpr std::array<std::int8_t, 2> LEFT_DRIVE_PORTS = {1, 2};
+//                               fighting; flip whichever one runs backward
+constexpr std::array<std::int8_t, 2> LEFT_DRIVE_PORTS = {-1, -2};
 constexpr std::array<std::int8_t, 2> RIGHT_DRIVE_PORTS = {3, 4};
 
 // ---------------------------------------------------------------------------

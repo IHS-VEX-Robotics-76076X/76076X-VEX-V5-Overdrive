@@ -791,16 +791,18 @@ static void test_drive_stall_exits_early() {
 // discovering it on a field.
 //
 // Delete or invert this test at the same time you enable auton for real.
-// On this robot all four drive motors spin the same way for the same command,
-// so none of the ports are negated. This pins that in config.hpp: if someone
-// adds a minus sign thinking a motor "must" be reversed, this fails on the
-// laptop instead of the robot grinding in place on the field.
+// This robot's drivetrain is mirrored: with all ports positive, a forward
+// command drove the right side forward and the left side backward, spinning
+// the robot in place. The left side is negated to fix that. This pins the
+// pattern in config.hpp - left negative, right positive - so that a
+// well-meaning "cleanup" that strips the minus signs, or a copy-paste that
+// flips the wrong side, fails on the laptop instead of on the field.
 static void test_drive_ports_match_robot_wiring() {
-    std::cout << "[test] drive ports: all four positive (every motor spins the same way)\n";
+    std::cout << "[test] drive ports: left side reversed, right side not (mirrored drivetrain)\n";
 
     std::cout << "  config.hpp: left {" << (int)LEFT_DRIVE_PORTS[0] << "," << (int)LEFT_DRIVE_PORTS[1]
               << "} right {" << (int)RIGHT_DRIVE_PORTS[0] << "," << (int)RIGHT_DRIVE_PORTS[1] << "}\n";
-    for (auto p : LEFT_DRIVE_PORTS)  assert(p > 0 && "left drive ports must all be positive");
+    for (auto p : LEFT_DRIVE_PORTS)  assert(p < 0 && "left drive ports must all be negative (reversed)");
     for (auto p : RIGHT_DRIVE_PORTS) assert(p > 0 && "right drive ports must all be positive");
 }
 
