@@ -93,13 +93,18 @@ constexpr double WHEEL_DIAMETER_INCH = 3.25;
 constexpr double GEAR_RATIO = 1.0;
 
 // Encoder ticks per motor revolution, from the drivetrain cartridge color.
+// Only valid because Chassis puts its motors in MotorUnits::counts - PROS
+// defaults to degrees (360 per turn regardless of cartridge).
 constexpr double TICKS_PER_REV = ticks_per_rev_for(DRIVE_MOTOR_GEARSET);
 
 // Encoder ticks per inch the robot actually travels. Worked out once here at
 // compile time rather than recalculated in every drive function.
 //
-//   ticks per inch = (ticks per motor turn * gearing) / wheel circumference
-constexpr double TICKS_PER_INCH = (TICKS_PER_REV * GEAR_RATIO) / (WHEEL_DIAMETER_INCH * M_PI);
+//   ticks per inch = ticks per motor turn / (gearing * wheel circumference)
+//
+// One motor turn moves the robot GEAR_RATIO wheel circumferences, so a faster
+// gearing means FEWER ticks per inch.
+constexpr double TICKS_PER_INCH = TICKS_PER_REV / (GEAR_RATIO * WHEEL_DIAMETER_INCH * M_PI);
 
 // Drive motor ports: 2 motors per side (4x11W = 44W baseline).
 // Override R11a caps Subsystem 1 (drivetrain) at 55W and R11b bans PTO/
@@ -276,7 +281,7 @@ constexpr double STALL_MIN_OUTPUT = 20.0;           // ignore stall when barely 
 
 // Opcontrol shaping: slew limits jerk with tall stacks (tip/descore risk),
 // expo gives fine control near center for goal alignment.
-constexpr int OPCONTROL_SLEW_PER_LOOP = 10; // max voltage change per 20ms loop
+constexpr int OPCONTROL_SLEW_PER_LOOP = 10; // max speed-up per 20ms loop (slowing down is instant)
 constexpr double OPCONTROL_EXPO_GAIN = 0.4; // 0 = linear, 1 = full cubic blend
 
 // Proportional gain correcting heading drift during drive_distance() using

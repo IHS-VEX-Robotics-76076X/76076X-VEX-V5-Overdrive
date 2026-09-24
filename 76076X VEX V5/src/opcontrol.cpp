@@ -126,9 +126,15 @@ void opcontrol() {
             targetLeft = axis(ANALOG_LEFT_Y);
             targetRight = axis(ANALOG_RIGHT_Y);
         }
-        // slew: tall Override stacks tip if the base jerks at full voltage
-        prevLeft = util::slew(prevLeft, targetLeft, OPCONTROL_SLEW_PER_LOOP);
-        prevRight = util::slew(prevRight, targetRight, OPCONTROL_SLEW_PER_LOOP);
+        // Clamp first: mixing can reach +/-254, and ramping down from there
+        // would add dead time before the motors see any change.
+        targetLeft = static_cast<int>(util::clamp(targetLeft, -127.0, 127.0));
+        targetRight = static_cast<int>(util::clamp(targetRight, -127.0, 127.0));
+
+        // Ramp up only (tall Override stacks tip if the base jerks at full
+        // voltage); braking and reversing respond immediately.
+        prevLeft = util::accelLimit(prevLeft, targetLeft, OPCONTROL_SLEW_PER_LOOP);
+        prevRight = util::accelLimit(prevRight, targetRight, OPCONTROL_SLEW_PER_LOOP);
         myRobot.drive(prevLeft, prevRight);
 
         run_cascade(master);

@@ -68,6 +68,15 @@ enum class MotorGears {
     invalid = INT32_MAX
 };
 
+// Encoder units. Stored-and-ignored like the cartridge: mock positions are
+// already abstract ticks.
+enum class MotorUnits {
+    degrees = 0,
+    rotations = 1,
+    counts = 2,
+    invalid = INT32_MAX
+};
+
 using MotorGearset = MotorGears;
 using MotorCart = MotorGears;
 using MotorCartridge = MotorGears;
@@ -76,9 +85,13 @@ using MotorGear = MotorGears;
 
 using std::string;
 
-inline long long millis() {
+// uint32_t like the real pros::millis(), counted from program start. Returning
+// raw steady_clock time as long long made `millis() - startTime` (a uint32_t)
+// blow past every timeout instantly on machines with long uptimes.
+inline std::uint32_t millis() {
     using namespace std::chrono;
-    return duration_cast<milliseconds>(steady_clock::now().time_since_epoch()).count();
+    static const auto start = steady_clock::now();
+    return static_cast<std::uint32_t>(duration_cast<milliseconds>(steady_clock::now() - start).count());
 }
 
 inline void delay(int ms) {
@@ -193,10 +206,12 @@ class Motor {
 class MotorGroup {
     public:
         MotorGroup(std::initializer_list<std::int8_t> ports,
-                   MotorGears gearset = MotorGears::invalid)
+                   MotorGears gearset = MotorGears::invalid,
+                   MotorUnits = MotorUnits::invalid)
             : gearset_(gearset) { add_ports(ports.begin(), ports.end()); }
         MotorGroup(const std::vector<std::int8_t>& ports,
-                   MotorGears gearset = MotorGears::invalid)
+                   MotorGears gearset = MotorGears::invalid,
+                   MotorUnits = MotorUnits::invalid)
             : gearset_(gearset) { add_ports(ports.begin(), ports.end()); }
         MotorGroup(Motor &m) { ports_.push_back(0); signs_.push_back(1); if (!has_motor(0)) create_motor(0); }
         void move(int v) const {

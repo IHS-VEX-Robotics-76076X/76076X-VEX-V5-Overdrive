@@ -51,4 +51,13 @@ int slew(int current, int target, int maxDelta) {
     return target;
 }
 
+int accelLimit(int current, int target, int maxDelta) {
+    // Reversing direction: drop to 0 instantly, then ramp up the other way.
+    if ((current > 0 && target < 0) || (current < 0 && target > 0)) current = 0;
+    int absCurrent = current < 0 ? -current : current;
+    int absTarget = target < 0 ? -target : target;
+    if (absTarget <= absCurrent) return target; // slowing down: no delay
+    return slew(current, target, maxDelta);
+}
+
 } // namespace util

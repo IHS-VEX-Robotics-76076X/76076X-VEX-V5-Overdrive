@@ -16,7 +16,8 @@ Chassis::Chassis(const std::vector<std::int8_t>& leftPorts,
                                  pros::Imu *imu,
                                  PID drivePID, PID turnPID, double headingKP,
                                  pros::v5::MotorGears gearset)
-        : leftMotors(leftPorts, gearset), rightMotors(rightPorts, gearset), imu(imu),
+        : leftMotors(leftPorts, gearset, pros::v5::MotorUnits::counts),
+          rightMotors(rightPorts, gearset, pros::v5::MotorUnits::counts), imu(imu),
             drivePID(drivePID), turnPID(turnPID), headingKP(headingKP) {
     // An empty side would silently divide-by-zero (0.0/0) into NaN every
     // time drive_distance()/odomLoop() average that side's encoder
@@ -35,7 +36,8 @@ Chassis::Chassis(const std::vector<std::int8_t>& leftPorts,
                                  const std::vector<std::int8_t>& rightPorts,
                                  PID drivePID, PID turnPID,
                                  pros::v5::MotorGears gearset)
-        : leftMotors(leftPorts, gearset), rightMotors(rightPorts, gearset), imu(nullptr),
+        : leftMotors(leftPorts, gearset, pros::v5::MotorUnits::counts),
+          rightMotors(rightPorts, gearset, pros::v5::MotorUnits::counts), imu(nullptr),
             drivePID(drivePID), turnPID(turnPID), headingKP(0.0) {
     assert(!leftPorts.empty() && !rightPorts.empty() &&
            "Chassis: leftPorts/rightPorts must not be empty - check LEFT_DRIVE_PORTS/RIGHT_DRIVE_PORTS in config.hpp");
@@ -161,8 +163,10 @@ void Chassis::drive_distance(double inches) {
             }
         }
 
-        leftMotors.move(static_cast<int>(util::clamp(clamped + correction, -127.0, 127.0)));
-        rightMotors.move(static_cast<int>(util::clamp(clamped - correction, -127.0, 127.0)));
+        // headingError > 0 means we drifted clockwise, so slow the left side
+        // and speed up the right to swing back counter-clockwise.
+        leftMotors.move(static_cast<int>(util::clamp(clamped - correction, -127.0, 127.0)));
+        rightMotors.move(static_cast<int>(util::clamp(clamped + correction, -127.0, 127.0)));
 
         if (drivePID.isSettled(error)) break;
         if (pros::millis() - startTime >= DRIVE_TIMEOUT_MS) break; // stalled/never converging - don't hang forever
@@ -212,8 +216,10 @@ void Chassis::turn_degrees(double degrees) {
         double output = turnPID.calculate(error, heading);
 
         double clamped = util::clamp(output, -127.0, 127.0);
-        leftMotors.move(static_cast<int>(-clamped));  // opposite sides spin opposite ways to turn
-        rightMotors.move(static_cast<int>(clamped));
+        // The IMU is clockwise-positive, and left-forward/right-backward is a
+        // clockwise turn, so a positive output drives the left side forward.
+        leftMotors.move(static_cast<int>(clamped));
+        rightMotors.move(static_cast<int>(-clamped));
 
         if (turnPID.isSettled(error)) break;
         if (pros::millis() - startTime >= TURN_TIMEOUT_MS) break; // stalled/never converging - don't hang forever
@@ -254,11 +260,12 @@ void Chassis::swing_turn(double degrees, DriveSide pivotSide) {
 
         // only the non-pivot side moves; the pivot side stays locked (brake
         // mode holds it in place) so the robot swings around that wheel
+        // (clockwise-positive: right side backward or left side forward)
         if (pivotSide == DriveSide::LEFT) {
             leftMotors.move(0);
-            rightMotors.move(static_cast<int>(clamped));
+            rightMotors.move(static_cast<int>(-clamped));
         } else {
-            leftMotors.move(static_cast<int>(-clamped));
+            leftMotors.move(static_cast<int>(clamped));
             rightMotors.move(0);
         }
 

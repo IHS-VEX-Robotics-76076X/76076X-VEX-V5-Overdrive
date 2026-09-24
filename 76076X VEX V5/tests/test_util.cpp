@@ -92,6 +92,19 @@ static void test_slew() {
     assert(util::slew(0, 100, 0) == 0);     // zero rate = frozen
 }
 
+static void test_accel_limit() {
+    std::cout << "[test] util::accelLimit\n";
+
+    assert(util::accelLimit(0, 100, 10) == 10);     // speeding up is rate-limited
+    assert(util::accelLimit(0, -100, 10) == -10);
+    assert(util::accelLimit(120, 0, 10) == 0);      // releasing the stick stops instantly
+    assert(util::accelLimit(120, 40, 10) == 40);    // slowing down is instant
+    assert(util::accelLimit(-120, -40, 10) == -40);
+    assert(util::accelLimit(120, -100, 10) == -10); // reversing: through 0, then ramp
+    assert(util::accelLimit(-5, 3, 10) == 3);
+    assert(util::accelLimit(50, 50, 10) == 50);
+}
+
 int main() {
     std::cout << "Host test: util\n";
 
@@ -100,6 +113,7 @@ int main() {
     test_deadband();
     test_expo();
     test_slew();
+    test_accel_limit();
     test_rand_range();
 
     std::cout << "All util tests passed.\n";

@@ -14,4 +14,5 @@ namespace util{
 
     int expo(int joystickValue, double gain = 0.4); // cubic blend for fine center control: 0 = linear
     int slew(int current, int target, int maxDelta); // rate-limit output change per loop (tip/descore guard)
+    int accelLimit(int current, int target, int maxDelta); // slew only when speeding up; slowing down is instant
 }

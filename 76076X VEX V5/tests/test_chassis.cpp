@@ -43,7 +43,7 @@ class ImuTurnSimulator {
             while (running_) {
                 int leftVoltage = pros::host_get_motor_voltage(leftPort_);
                 int rightVoltage = pros::host_get_motor_voltage(rightPort_);
-                imu_.set_rotation(imu_.get_rotation() + (rightVoltage - leftVoltage) * 0.025);
+                imu_.set_rotation(imu_.get_rotation() + (leftVoltage - rightVoltage) * 0.025); // clockwise-positive, like the real IMU
                 pros::delay(10);
             }
         }
@@ -260,7 +260,7 @@ static void test_ticks_per_rev_matches_cartridge_color() {
     std::cout << "  drivetrain is blue -> TICKS_PER_REV=" << TICKS_PER_REV << " (expect 300)\n";
     assert(TICKS_PER_REV == 300.0);
 
-    double expected = (300.0 * GEAR_RATIO) / (WHEEL_DIAMETER_INCH * M_PI);
+    double expected = 300.0 / (GEAR_RATIO * WHEEL_DIAMETER_INCH * M_PI);
     std::cout << "  TICKS_PER_INCH=" << TICKS_PER_INCH << " (expect " << expected << ")\n";
     assert(std::abs(TICKS_PER_INCH - expected) < 1e-9);
 }
