@@ -80,6 +80,8 @@ void opcontrol() {
         update_status_display(master);
 
         // claw: A open / close (toggle)
+        
+
         // Y flip (toggle for pneumatics)
 
         pros::delay(20);

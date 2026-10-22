@@ -169,6 +169,9 @@ constexpr std::array<std::int8_t, 2> RIGHT_DRIVE_PORTS = {3, 4};
 // lift stalls or judders instead of rising, the two are fighting: flip the
 // sign on one of them.
 constexpr std::array<std::int8_t, 2> CASCADE_MOTOR_PORTS = {5, -6};
+// Claw ports
+constexpr std::uint8_t CLAW_PNEUMATIC_PORT = 'A';
+constexpr std::uint8_t CLAW_FLIP_PNEUMATIC_PORT = 'B'; 
 
 // Intake.
 constexpr std::int8_t INTAKE_MOTOR_PORT = 7;
