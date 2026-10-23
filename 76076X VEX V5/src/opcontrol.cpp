@@ -1,6 +1,6 @@
 /**
  * Driver control: drivetrain (arcade or tank, see DEFAULT_DRIVE_MODE in
- * config.hpp) plus the cascade/arm/clamp/intake mechanisms.
+ * config.hpp) plus the cascade/claw/flip/intake mechanisms.
  */
 
 #include "main.h"
@@ -15,7 +15,8 @@
 extern Chassis myRobot;
 extern pros::MotorGroup cascade_motors;
 extern pros::Motor intake_motor;
-extern pros::Motor arm_motor;
+extern pros::ADIDigitalOut claw_piston;
+extern pros::ADIDigitalOut flip_piston;
 extern std::atomic<bool> show_status; // toggled by the LCD center button (see main.cpp)
 
 // Shows robot battery %, controller connection, and any drivetrain/mechanism
@@ -24,10 +25,10 @@ static void update_status_display(pros::Controller &master) {
     if (!show_status) return;
 
     // A non-zero fault value means a motor is overheating, drawing too much
-    // current, or reporting a driver fault.
+    // current, or reporting a driver fault. Pistons aren't motors and don't
+    // report faults, so they're not part of this check.
     bool fault = myRobot.has_fault()
-        || intake_motor.get_faults() != 0
-        || arm_motor.get_faults() != 0;
+        || intake_motor.get_faults() != 0;
 
     for (auto flags : cascade_motors.get_faults_all()) {
         if (flags != 0) { fault = true; break; }
@@ -79,10 +80,20 @@ void opcontrol() {
 
         update_status_display(master);
 
-        // claw: A open / close (toggle)
-        
+        // claw: A toggles open/closed. new_press (not get_digital) so holding
+        // the button doesn't flip it back and forth every 20ms loop.
+        static bool clawOpen = false;
+        if (master.get_digital_new_press(E_CONTROLLER_DIGITAL_A)) {
+            clawOpen = !clawOpen;
+            claw_piston.set_value(clawOpen);
+        }
 
-        // Y flip (toggle for pneumatics)
+        // Y toggles the flip piston, same edge-triggered reasoning as above.
+        static bool flipOut = false;
+        if (master.get_digital_new_press(E_CONTROLLER_DIGITAL_Y)) {
+            flipOut = !flipOut;
+            flip_piston.set_value(flipOut);
+        }
 
         pros::delay(20);
     }

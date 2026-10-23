@@ -56,6 +56,11 @@ pros::MotorGroup cascade_motors(
 // Intake.
 pros::Motor intake_motor(INTAKE_MOTOR_PORT, INTAKE_MOTOR_GEARSET);
 
+// Claw and flip: pneumatic pistons, not motors - each one is just a solenoid
+// on an ADI port, started retracted (false/LOW).
+pros::ADIDigitalOut claw_piston(CLAW_PNEUMATIC_PORT, false);
+pros::ADIDigitalOut flip_piston(CLAW_FLIP_PNEUMATIC_PORT, false);
+
 // Sensors.
 pros::Imu inertial_sensor(INERTIAL_SENSOR_PORT);    // which way we're facing
 pros::Rotation tracking_wheel(TRACKING_WHEEL_PORT); // how far we've travelled
