@@ -14,17 +14,8 @@
 // inside initialize() itself (after it, before DIAG_INIT_REACHED prints).
 // This file never printed anything before, so terminal silence on its own
 // doesn't confirm the program is running at all - these checkpoints do.
-//
-// fflush() after every line: stdout here is fully buffered, not
-// line-buffered (there's no real tty to trigger auto-flush on '\n'), and
-// opcontrol() never returns to flush on exit. Without this, a couple of
-// short lines can sit in the buffer forever and never reach the wire -
-// which looks identical to the program never running at all.
 struct DiagStaticInitMarker {
-    DiagStaticInitMarker() {
-        std::printf("DIAG: static init started\n");
-        std::fflush(stdout);
-    }
+    DiagStaticInitMarker() { std::printf("DIAG: static init started\n"); }
 };
 static DiagStaticInitMarker diag_static_init_marker;
 
@@ -130,7 +121,6 @@ void on_center_button() {
  */
 void initialize() {
 	std::printf("DIAG: initialize() reached\n"); // TEMPORARY - see DiagStaticInitMarker above
-	std::fflush(stdout);
 	pros::lcd::initialize();
 	pros::lcd::set_text(0, "76076X Overdrive");
 
