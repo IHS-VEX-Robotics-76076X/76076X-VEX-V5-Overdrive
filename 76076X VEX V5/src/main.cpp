@@ -5,19 +5,6 @@
 
 #include <vector>
 #include <atomic>
-#include <cstdio>
-
-// TEMPORARY STARTUP DIAGNOSTIC - remove once the "brain shows no LCD/LLEMU
-// UI" issue is root-caused. Prints to the PROS terminal (`pros terminal`) at
-// two checkpoints so we can tell whether startup is hanging/dying during
-// global static initialization (before DIAG_STATIC_INIT prints) or somewhere
-// inside initialize() itself (after it, before DIAG_INIT_REACHED prints).
-// This file never printed anything before, so terminal silence on its own
-// doesn't confirm the program is running at all - these checkpoints do.
-struct DiagStaticInitMarker {
-    DiagStaticInitMarker() { std::printf("DIAG: static init started\n"); }
-};
-static DiagStaticInitMarker diag_static_init_marker;
 
 void red_close_side();
 void red_far_side();
@@ -54,6 +41,25 @@ static const char* auton_name(AutonRoutine r) {
 }
 
 // ---------------------------------------------------------------------------
+// DO NOT printf() FROM A GLOBAL CONSTRUCTOR
+//
+// Startup diagnostics that print from a global (a struct whose constructor
+// calls printf, declared at file scope) have been added here twice now, and
+// both times the brain came up with a completely blank screen.
+//
+// Global constructors run BEFORE the PROS kernel starts. printf writes
+// through PROS's serial driver, which needs the RTOS scheduler running, so
+// calling it that early can hang or fault. When it does, initialize() never
+// runs, lcd::initialize() never runs, and the screen stays black - which
+// reads as "the program isn't running" rather than "the diagnostic broke
+// it", so the diagnostic gets kept and the real symptom gets chased.
+//
+// To trace startup, print from INSIDE initialize() or later, where the
+// kernel is up. Better still, use lcd::set_text() - you can read it without
+// a USB cable attached.
+// ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
 // HARDWARE
 //
 // Every motor and sensor is created here, once, and shared with the rest of
@@ -69,10 +75,16 @@ pros::MotorGroup cascade_motors(
 // Intake.
 pros::Motor intake_motor(INTAKE_MOTOR_PORT, INTAKE_MOTOR_GEARSET);
 
-// Claw and flip: pneumatic pistons, not motors - each one is just a solenoid
-// on an ADI port, started retracted (false/LOW).
-pros::ADIDigitalOut claw_piston(CLAW_PNEUMATIC_PORT, false);
-pros::ADIDigitalOut flip_piston(CLAW_FLIP_PNEUMATIC_PORT, false);
+// Pneumatics. Not motors - each is a solenoid on an ADI (three-wire) port,
+// started retracted (false/LOW).
+//
+//   claw_piston  grips the pin
+//   flip_piston  lifts the pin up
+//
+// One solenoid can drive several cylinders plumbed together, so "the claw"
+// being more than one physical cylinder still only needs the one port here.
+pros::adi::DigitalOut claw_piston(CLAW_PNEUMATIC_PORT, false);
+pros::adi::DigitalOut flip_piston(CLAW_FLIP_PNEUMATIC_PORT, false);
 
 // Sensors.
 pros::Imu inertial_sensor(INERTIAL_SENSOR_PORT);    // which way we're facing
@@ -120,7 +132,6 @@ void on_center_button() {
  * to keep execution time for this mode under a few seconds.
  */
 void initialize() {
-	std::printf("DIAG: initialize() reached\n"); // TEMPORARY - see DiagStaticInitMarker above
 	pros::lcd::initialize();
 	pros::lcd::set_text(0, "76076X Overdrive");
 

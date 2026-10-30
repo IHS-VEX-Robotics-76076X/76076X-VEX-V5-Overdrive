@@ -170,9 +170,15 @@ constexpr std::array<std::int8_t, 2> RIGHT_DRIVE_PORTS = {3, 4};
 // sign on one of them.
 constexpr std::array<std::int8_t, 2> CASCADE_MOTOR_PORTS = {5, -6};
 
-// Claw ports. Pistons on ADI (three-wire) ports, not Smart Port motors -
-// pros::ADIDigitalOut takes 1-8 or the matching letter 'A'-'H'. Placeholders:
-// neither solenoid is wired yet, so confirm these against the real wiring.
+// Pneumatic ports. Solenoids on ADI (three-wire) ports, not Smart Ports -
+// pros::adi::DigitalOut takes 1-8 or the matching letter 'A'-'H'.
+//
+//   CLAW_PNEUMATIC_PORT       grips the pin
+//   CLAW_FLIP_PNEUMATIC_PORT  lifts the pin up
+//
+// TODO: these are still placeholders. Set them to the ADI ports the
+// solenoids are actually plugged into - nothing in the code can detect a
+// wrong ADI port, so a mismatch just means the piston silently never fires.
 constexpr std::uint8_t CLAW_PNEUMATIC_PORT = 'A';
 constexpr std::uint8_t CLAW_FLIP_PNEUMATIC_PORT = 'B';
 

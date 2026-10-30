@@ -15,8 +15,8 @@
 extern Chassis myRobot;
 extern pros::MotorGroup cascade_motors;
 extern pros::Motor intake_motor;
-extern pros::ADIDigitalOut claw_piston;
-extern pros::ADIDigitalOut flip_piston;
+extern pros::adi::DigitalOut claw_piston;
+extern pros::adi::DigitalOut flip_piston;
 extern std::atomic<bool> show_status; // toggled by the LCD center button (see main.cpp)
 
 // Shows robot battery %, controller connection, and any drivetrain/mechanism
@@ -42,26 +42,78 @@ static void update_status_display(pros::Controller &master) {
     pros::lcd::set_text(2, buf);
 }
 
+// Adding a DriveMode without giving it a branch below would silently fall
+// into the else and drive as TANK - which is exactly the bug that shipped
+// when SPLIT_ARCADE was added. This turns that into a build error.
+//
+// It lives out here rather than inside the if/else: a static_assert whose
+// condition doesn't depend on a template parameter is evaluated even in a
+// discarded `if constexpr` branch, so putting it in the else fires it on
+// every build regardless of the configured mode.
+static_assert(DEFAULT_DRIVE_MODE == DriveMode::SPLIT_ARCADE ||
+              DEFAULT_DRIVE_MODE == DriveMode::ARCADE ||
+              DEFAULT_DRIVE_MODE == DriveMode::TANK,
+              "Unhandled DriveMode - add a branch for it in opcontrol()");
+
 void opcontrol() {
     pros::Controller master(pros::E_CONTROLLER_MASTER);
     int prevLeft = 0;
     int prevRight = 0;
 
     while (true) {
+        // Reads one joystick axis and cleans it up:
+        //   deadband - a released stick rarely sits at exactly 0, so ignore
+        //              tiny readings or the robot creeps on its own
+        //   expo     - softens the middle of the stick travel for fine
+        //              control, while full push still gives full power
+        //
+        // Generic parameter because the real PROS API takes a strongly typed
+        // enum here while the host mock takes an int - `auto` accepts both.
+        auto axis = [&master](auto channel) {
+            return util::expo(util::deadband(static_cast<int>(master.get_analog(channel))),
+                              OPCONTROL_EXPO_GAIN);
+        };
+
         int targetLeft = 0;
         int targetRight = 0;
-        if constexpr (DEFAULT_DRIVE_MODE == DriveMode::ARCADE) {
-            int forward = util::expo(util::deadband(static_cast<int>(master.get_analog(ANALOG_LEFT_Y))), OPCONTROL_EXPO_GAIN);
-            int turn = util::expo(util::deadband(static_cast<int>(master.get_analog(ANALOG_LEFT_X))), OPCONTROL_EXPO_GAIN);
+
+        // Every DriveMode gets its own branch. There used to be only an
+        // ARCADE test and an else, so SPLIT_ARCADE - the configured default -
+        // fell through to the else and quietly drove as TANK. It compiled
+        // clean and no test covered it; the only symptom was the sticks
+        // behaving wrong. The static_assert at the bottom means adding a
+        // fourth mode without handling it is now a build error rather than
+        // another silent fallthrough.
+        if constexpr (DEFAULT_DRIVE_MODE == DriveMode::SPLIT_ARCADE) {
+            // Drive with the LEFT stick, steer with the RIGHT stick.
+            //
+            // Adding the turn to one side and subtracting it from the other
+            // is what rotates the robot: pushing the right stick left makes
+            // the left wheels slower (or reverse) and the right wheels
+            // faster, so the robot swings left.
+            int forward = axis(ANALOG_LEFT_Y);
+            int turn = axis(ANALOG_RIGHT_X);
+            targetLeft = forward + turn;
+            targetRight = forward - turn;
+        } else if constexpr (DEFAULT_DRIVE_MODE == DriveMode::ARCADE) {
+            // Same mixing, but both axes come off the left stick.
+            int forward = axis(ANALOG_LEFT_Y);
+            int turn = axis(ANALOG_LEFT_X);
             targetLeft = forward + turn;
             targetRight = forward - turn;
         } else {
-            targetLeft = util::expo(util::deadband(static_cast<int>(master.get_analog(ANALOG_LEFT_Y))), OPCONTROL_EXPO_GAIN);
-            targetRight = util::expo(util::deadband(static_cast<int>(master.get_analog(ANALOG_RIGHT_Y))), OPCONTROL_EXPO_GAIN);
+            // Tank: one stick per side, no mixing.
+            targetLeft = axis(ANALOG_LEFT_Y);
+            targetRight = axis(ANALOG_RIGHT_Y);
         }
-        // slew: tall Override stacks tip if the base jerks at full voltage
-        prevLeft = util::slew(prevLeft, targetLeft, OPCONTROL_SLEW_PER_LOOP);
-        prevRight = util::slew(prevRight, targetRight, OPCONTROL_SLEW_PER_LOOP);
+        // Ramp the power up gradually so a tall stack doesn't tip when the
+        // base jerks to full voltage - but let it come DOWN instantly, so
+        // releasing the stick or slamming into reverse stops the robot now
+        // rather than coasting through a ramp. util::slew limits both
+        // directions; util::accelLimit limits only speeding up, which is
+        // what OPCONTROL_SLEW_PER_LOOP's comment already describes.
+        prevLeft = util::accelLimit(prevLeft, targetLeft, OPCONTROL_SLEW_PER_LOOP);
+        prevRight = util::accelLimit(prevRight, targetRight, OPCONTROL_SLEW_PER_LOOP);
         myRobot.drive(prevLeft, prevRight);
 
         // cascade lift: R1 up / R2 down. Holding both cancels out to 0, which
