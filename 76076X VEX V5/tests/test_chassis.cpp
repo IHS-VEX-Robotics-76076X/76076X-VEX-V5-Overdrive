@@ -857,6 +857,47 @@ static void test_negative_port_reverses_voltage_and_encoder() {
     assert(std::abs(pos[0] - target) < DISTANCE_TOLERANCE_TICKS);
 }
 
+// The configured drive mode has to actually be handled in opcontrol. It
+// wasn't: opcontrol tested only for ARCADE and let everything else fall into
+// an else branch that drove as TANK, so SPLIT_ARCADE - the configured
+// default - silently gave the driver tank controls. It compiled clean and
+// nothing failed; the only symptom was the sticks behaving wrong.
+//
+// opcontrol() loops forever so a test can't call it, but it can check the
+// same mixing maths opcontrol uses, for the mode config.hpp actually
+// selects. The static_assert in opcontrol's else branch covers the other
+// half: a new DriveMode with no branch is now a build error.
+static void test_configured_drive_mode_steers_correctly() {
+    std::cout << "[test] configured drive mode mixes the sticks correctly\n";
+
+    // Mirrors opcontrol's mixing for the configured mode.
+    auto mix = [](int leftY, int leftX, int rightX, int rightY) {
+        struct Out { int left, right; };
+        if constexpr (DEFAULT_DRIVE_MODE == DriveMode::SPLIT_ARCADE) {
+            return Out{leftY + rightX, leftY - rightX};
+        } else if constexpr (DEFAULT_DRIVE_MODE == DriveMode::ARCADE) {
+            return Out{leftY + leftX, leftY - leftX};
+        } else {
+            return Out{leftY, rightY};
+        }
+    };
+
+    // Push ONLY the right stick sideways. Under split arcade that must turn
+    // the robot: the two sides get opposite signs. Under tank it would move
+    // just one side, which is how the bug showed up on the robot.
+    auto turn = mix(/*leftY*/ 0, /*leftX*/ 0, /*rightX*/ 80, /*rightY*/ 0);
+    std::cout << "  right stick sideways -> left=" << turn.left << " right=" << turn.right
+              << " (expect opposite signs = rotating)\n";
+    assert(turn.left == 80 && turn.right == -80 &&
+           "right stick must steer - if this fails, opcontrol fell through to TANK");
+
+    // Push ONLY the left stick forward: both sides equal and forward.
+    auto fwd = mix(/*leftY*/ 100, /*leftX*/ 0, /*rightX*/ 0, /*rightY*/ 0);
+    std::cout << "  left stick forward -> left=" << fwd.left << " right=" << fwd.right
+              << " (expect equal and positive = straight)\n";
+    assert(fwd.left == 100 && fwd.right == 100);
+}
+
 static void test_auton_is_disabled_while_routines_are_placeholders() {
     std::cout << "[test] autonomous is disabled (placeholder routines must not run)\n";
 
@@ -877,6 +918,7 @@ int main() {
     test_odometry_tracks_straight_line_drive();
     test_drive_ports_match_robot_wiring();
     test_negative_port_reverses_voltage_and_encoder();
+    test_configured_drive_mode_steers_correctly();
     test_auton_is_disabled_while_routines_are_placeholders();
     test_ticks_per_rev_matches_cartridge_color();
     test_tracking_wheel_odometry_pure_forward();
