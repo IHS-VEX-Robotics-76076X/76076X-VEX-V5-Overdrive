@@ -127,7 +127,10 @@ UTIL_TEST_BIN := $(BINDIR)/host_test_util
 PID_TEST_SRC := tests/test_pid.cpp
 PID_TEST_BIN := $(BINDIR)/host_test_pid
 
-HOST_TEST_BINS := $(CHASSIS_TEST_BIN) $(UTIL_TEST_BIN) $(PID_TEST_BIN)
+MENU_TEST_SRC := src/menu.cpp tests/test_menu.cpp
+MENU_TEST_BIN := $(BINDIR)/host_test_menu
+
+HOST_TEST_BINS := $(CHASSIS_TEST_BIN) $(UTIL_TEST_BIN) $(PID_TEST_BIN) $(MENU_TEST_BIN)
 
 .DEFAULT_GOAL=host-test
 
@@ -146,6 +149,10 @@ $(UTIL_TEST_BIN): $(UTIL_TEST_SRC)
 $(PID_TEST_BIN): $(PID_TEST_SRC)
 	@mkdir -p $(dir $(PID_TEST_BIN))
 	$(HOST_CXX) $(HOST_CXXFLAGS) -o $@ $(PID_TEST_SRC)
+
+$(MENU_TEST_BIN): $(MENU_TEST_SRC)
+	@mkdir -p $(dir $(MENU_TEST_BIN))
+	$(HOST_CXX) $(HOST_CXXFLAGS) -o $@ $(MENU_TEST_SRC)
 
 clean:
 	rm -f $(HOST_TEST_BINS)

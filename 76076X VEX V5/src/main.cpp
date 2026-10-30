@@ -2,9 +2,11 @@
 #include "chassis.hpp"
 #include "config.hpp"
 #include "util.hpp"
+#include "menu.hpp"
 
 #include <vector>
 #include <atomic>
+#include <string>
 
 void red_close_side();
 void red_far_side();
@@ -13,32 +15,10 @@ void blue_far_side();
 void skills_auton();
 void safe_auton();
 
-// Autonomous selector: cycled with the LCD left/right buttons in
-// competition_initialize() below. Override AWP needs 7 pins on 3 goals on
-// your own side + both robots off the perimeter - one routine per
-// color/side plus skills/safe is the minimum useful set.
-enum class AutonRoutine {
-	RED_CLOSE,
-	RED_FAR,
-	BLUE_CLOSE,
-	BLUE_FAR,
-	SKILLS,
-	SAFE
-};
-
-static AutonRoutine selected_auton = AutonRoutine::RED_CLOSE;
-
-static const char* auton_name(AutonRoutine r) {
-	switch (r) {
-		case AutonRoutine::RED_CLOSE:  return "Auton: RED CLOSE";
-		case AutonRoutine::RED_FAR:    return "Auton: RED FAR";
-		case AutonRoutine::BLUE_CLOSE: return "Auton: BLUE CLOSE";
-		case AutonRoutine::BLUE_FAR:   return "Auton: BLUE FAR";
-		case AutonRoutine::SKILLS:     return "Auton: SKILLS";
-		case AutonRoutine::SAFE:       return "Auton: SAFE (no move)";
-	}
-	return "Auton: ?";
-}
+// AutonRoutine, Screen and the button transitions all live in menu.hpp so
+// the menu logic can be tested without a robot. This file holds the parts
+// that genuinely need hardware: the button callbacks, the drawing, and
+// actually calling the routines.
 
 // ---------------------------------------------------------------------------
 // DO NOT printf() FROM A GLOBAL CONSTRUCTOR
@@ -112,17 +92,165 @@ Chassis myRobot(
 // opcontrol() loop iteration (a different task) - plain bool would be an
 // unsynchronized cross-task race, so this needs to be atomic even though
 // both sides only ever do a simple load/store.
-std::atomic<bool> show_status{false};
+// ---------------------------------------------------------------------------
+// MENU STATE
+//
+// Button callbacks run in their own PROS task while opcontrol() draws the
+// screen from a different one, so this is shared between tasks and needs a
+// lock. The critical sections are a handful of field copies, so a plain
+// mutex is plenty.
+// ---------------------------------------------------------------------------
+static MenuState menu_state;
+static pros::Mutex menu_mutex;
 
-/**
- * A callback function for LLEMU's center button.
- *
- * Toggles the live battery/controller-connection/motor-fault status readout
- * on LCD line 2 (see update_status_display() in opcontrol.cpp).
- */
-void on_center_button() {
-	show_status = !show_status;
-	if (!show_status) pros::lcd::clear_line(2);
+// Snapshot for the renderer - all three fields from the same instant, so the
+// screen can't show one menu's heading over another menu's options.
+MenuState menu_snapshot() {
+	menu_mutex.take();
+	MenuState copy = menu_state;
+	menu_mutex.give();
+	return copy;
+}
+
+// opcontrol calls this once it has finished running a requested test route.
+void menu_clear_test_request() {
+	menu_mutex.take();
+	menu_state.runTestNow = false;
+	menu_mutex.give();
+}
+
+// The three button callbacks. Each one only moves the state along - no
+// motors, no drawing. Pressing a button must never block, because this task
+// also delivers the other buttons.
+static void apply_button(MenuButton button) {
+	menu_mutex.take();
+	menu_state = menu_press(menu_state, button);
+	menu_mutex.give();
+}
+
+static void on_left_button()   { apply_button(MenuButton::LEFT); }
+static void on_center_button() { apply_button(MenuButton::CENTER); }
+static void on_right_button()  { apply_button(MenuButton::RIGHT); }
+
+// ---------------------------------------------------------------------------
+// DEVICE STATUS
+// ---------------------------------------------------------------------------
+
+// Is a Smart Port device actually responding on this port right now?
+//
+// Takes the port as it appears in config.hpp, so a reversed port like -2 is
+// fine - the sign only describes direction, the device lives at |port|.
+bool smart_port_connected(std::int8_t port) {
+	int absolute = port < 0 ? -port : port;
+	return pros::Motor(static_cast<std::int8_t>(absolute)).is_installed();
+}
+
+// Builds one line like "Drive L: 1 OK  2 --" for the status screen.
+std::string port_pair_status(const char* label, std::int8_t a, std::int8_t b) {
+	int absA = a < 0 ? -a : a;
+	int absB = b < 0 ? -b : b;
+	return std::string(label) + ": "
+	     + std::to_string(absA) + (smart_port_connected(a) ? " OK  " : " --  ")
+	     + std::to_string(absB) + (smart_port_connected(b) ? " OK" : " --");
+}
+
+// ---------------------------------------------------------------------------
+// DRAWING THE SCREEN
+//
+// Called every loop from whichever task is live (opcontrol during driving,
+// competition_initialize before a match). One renderer for every screen, so
+// the display can't disagree with the menu state.
+//
+// Every line is written every time, blanks included. Leaving old lines up
+// when a page is shorter than the last one is how you end up with two pages
+// mixed together on screen.
+// ---------------------------------------------------------------------------
+
+void render_menu() {
+	MenuState state = menu_snapshot();
+
+	switch (state.screen) {
+		case Screen::HOME: {
+			pros::lcd::set_text(0, "76076X Overdrive");
+			pros::lcd::set_text(1, std::string("Match auton: ") + auton_name(state.selected));
+			pros::lcd::set_text(2, AUTON_ENABLED ? "Auton: ENABLED"
+			                                     : "Auton: OFF (config.hpp)");
+			pros::lcd::set_text(3, "");
+			pros::lcd::set_text(4, std::string("Battery: ")
+			                       + std::to_string(static_cast<int>(pros::battery::get_capacity())) + "%");
+			pros::lcd::set_text(5, "");
+			pros::lcd::set_text(6, "L=pick auton  M=test");
+			pros::lcd::set_text(7, "R=port check");
+			break;
+		}
+
+		case Screen::AUTON_SELECT: {
+			pros::lcd::set_text(0, "PICK MATCH AUTON");
+			pros::lcd::set_text(1, "");
+			pros::lcd::set_text(2, std::string(">> ") + auton_name(state.selected));
+			pros::lcd::set_text(3, "");
+			pros::lcd::set_text(4, AUTON_ENABLED ? "" : "NOTE: auton is OFF");
+			pros::lcd::set_text(5, "");
+			pros::lcd::set_text(6, "L=next  M=confirm");
+			pros::lcd::set_text(7, "R=cancel");
+			break;
+		}
+
+		case Screen::TEST_MENU: {
+			pros::lcd::set_text(0, "TEST AUTON");
+			pros::lcd::set_text(1, "");
+			pros::lcd::set_text(2, std::string(">> ") + auton_name(state.selected));
+			// Flagged while the routine is actually driving, so nobody
+			// assumes the screen has frozen - the robot is moving and the
+			// sticks are ignored until it finishes.
+			pros::lcd::set_text(3, state.runTestNow ? "RUNNING - sticks off" : "");
+			pros::lcd::set_text(4, "");
+			pros::lcd::set_text(5, "");
+			pros::lcd::set_text(6, "L=next  M=RUN NOW");
+			pros::lcd::set_text(7, "R=back to driving");
+			break;
+		}
+
+		case Screen::STATUS: {
+			// What is actually responding on each port right now. Unplug a
+			// motor and its number flips to "--" within a loop.
+			pros::lcd::set_text(0, "PORT CHECK");
+			pros::lcd::set_text(1, port_pair_status("Drive L", LEFT_DRIVE_PORTS[0], LEFT_DRIVE_PORTS[1]));
+			pros::lcd::set_text(2, port_pair_status("Drive R", RIGHT_DRIVE_PORTS[0], RIGHT_DRIVE_PORTS[1]));
+			pros::lcd::set_text(3, port_pair_status("Cascade", CASCADE_MOTOR_PORTS[0], CASCADE_MOTOR_PORTS[1]));
+			pros::lcd::set_text(4, std::string("Intake ") + std::to_string(INTAKE_MOTOR_PORT)
+			                       + (smart_port_connected(INTAKE_MOTOR_PORT) ? ": OK" : ": --"));
+			pros::lcd::set_text(5, std::string("IMU ") + std::to_string(INERTIAL_SENSOR_PORT)
+			                       + (inertial_sensor.is_installed() ? ": OK" : ": --")
+			                       + "  Track " + std::to_string(TRACKING_WHEEL_PORT)
+			                       + (tracking_wheel.is_installed() ? ": OK" : ": --"));
+			// ADI ports are dumb three-wire outputs with no device ID, so
+			// there is genuinely nothing to query - a solenoid that is
+			// unplugged looks identical to one sitting there doing nothing.
+			// Saying so beats inventing a reading that would always read OK.
+			pros::lcd::set_text(6, "Pneumatics: can't detect");
+			pros::lcd::set_text(7, "any button = back");
+			break;
+		}
+	}
+}
+
+// ---------------------------------------------------------------------------
+// RUNNING A ROUTINE
+// ---------------------------------------------------------------------------
+
+// Calls one autonomous routine. Shared by autonomous() and by the test menu
+// so a route tested on the bench is literally the same code that runs in the
+// match - no second dispatch table to drift out of step.
+void run_auton_routine(AutonRoutine routine) {
+	switch (routine) {
+		case AutonRoutine::RED_CLOSE:  red_close_side(); break;
+		case AutonRoutine::RED_FAR:    red_far_side(); break;
+		case AutonRoutine::BLUE_CLOSE: blue_close_side(); break;
+		case AutonRoutine::BLUE_FAR:   blue_far_side(); break;
+		case AutonRoutine::SKILLS:     skills_auton(); break;
+		case AutonRoutine::SAFE:       safe_auton(); break;
+	}
 }
 
 /**
@@ -160,7 +288,11 @@ void initialize() {
 		pros::lcd::set_text(1, "READY - no IMU, drive only");
 	}
 
+	// All three buttons: left picks the match auton, centre opens the test
+	// menu, right shows what's plugged in. See menu.hpp for the full map.
+	pros::lcd::register_btn0_cb(on_left_button);
 	pros::lcd::register_btn1_cb(on_center_button);
+	pros::lcd::register_btn2_cb(on_right_button);
 
 	// The lift must hold position against gravity when stopped, so it uses
 	// HOLD - that's what lets you pause it partway up and have it stay there
@@ -208,33 +340,15 @@ void disabled() {}
  * starts.
  */
 void competition_initialize() {
-	auto step = [](int dir) {
-		int v = static_cast<int>(selected_auton) + dir;
-		const int N = static_cast<int>(AutonRoutine::SAFE) + 1;
-		if (v < 0) v = N - 1;
-		if (v >= N) v = 0;
-		selected_auton = static_cast<AutonRoutine>(v);
-	};
+	// Runs only with field control attached, between initialize() and the
+	// match starting. Shows the same menu as driver control, driven by the
+	// same callbacks - one set of button meanings to learn, not two.
+	//
+	// The previous version read the buttons itself with its own left/right
+	// stepping, which meant the buttons did different things depending on
+	// whether a field controller happened to be plugged in.
 	while (true) {
-		auto buttons = pros::lcd::read_buttons();
-		// edge-triggered with debounce: hold-to-scroll caused skipped
-		// selections when this ran every 20ms with no release wait.
-		if (buttons & LCD_BTN_LEFT) {
-			step(-1);
-			while (pros::lcd::read_buttons() & LCD_BTN_LEFT) pros::delay(20);
-		} else if (buttons & LCD_BTN_RIGHT) {
-			step(1);
-			while (pros::lcd::read_buttons() & LCD_BTN_RIGHT) pros::delay(20);
-		}
-
-		// Say so plainly when the selection can't do anything, rather than
-		// letting someone cycle through routines that are never going to run.
-		if (AUTON_ENABLED) {
-			pros::lcd::set_text(3, auton_name(selected_auton));
-		} else {
-			pros::lcd::set_text(3, "Auton: DISABLED (config.hpp)");
-		}
-
+		render_menu();
 		pros::delay(50);
 	}
 }
@@ -271,14 +385,7 @@ void autonomous() {
 		return;
 	}
 
-	switch (selected_auton) {
-		case AutonRoutine::RED_CLOSE:  red_close_side(); break;
-		case AutonRoutine::RED_FAR:    red_far_side(); break;
-		case AutonRoutine::BLUE_CLOSE: blue_close_side(); break;
-		case AutonRoutine::BLUE_FAR:   blue_far_side();  break;
-		case AutonRoutine::SKILLS:     skills_auton(); break;
-		case AutonRoutine::SAFE:       safe_auton(); break;
-	}
+	run_auton_routine(menu_snapshot().selected);
 }
 
 /**

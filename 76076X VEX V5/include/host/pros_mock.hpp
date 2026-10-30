@@ -101,9 +101,16 @@ inline void delay(int ms) {
 // LCD mock
 namespace lcd {
     inline void initialize() {}
-    inline void set_text(int line, const char *text) { std::cout << "LCD L"<<line<<": "<<text<<"\n"; }
+    // Real signature is set_text(std::int16_t, std::string) - taking const
+    // char* here let code compile on host that fails on device.
+    inline void set_text(int line, const std::string &text) { std::cout << "LCD L"<<line<<": "<<text<<"\n"; }
     inline void clear_line(int line) {}
-    inline void register_btn1_cb(std::function<void()> cb) { /* ignore */ }
+    // All three LCD buttons, matching the real llemu API. No-ops: there is
+    // no hardware button to press on a laptop, so the menu logic is covered
+    // by tests/test_menu.cpp instead, which calls the state machine directly.
+    inline void register_btn0_cb(std::function<void()> cb) { /* left */ }
+    inline void register_btn1_cb(std::function<void()> cb) { /* centre */ }
+    inline void register_btn2_cb(std::function<void()> cb) { /* right */ }
     inline void print(int row, const char *fmt, int a, int b, int c) { std::cout << "LCD:" << row << " " << a << " " << b << " " << c << "\n"; }
     inline int read_buttons() { return 0; }
 }
@@ -156,6 +163,7 @@ constexpr int E_MOTOR_BRAKE_HOLD = 2;
 // hits it and crashes on startup).
 inline std::map<int, int> __host_controller_analogs; // controller analog values
 inline std::map<int, bool> __host_controller_digital; // controller button values
+inline std::map<int, bool> __host_controller_prev_digital; // last-loop state, for get_digital_new_press
 // Prototypes needed by classes
 inline bool has_motor(int port);
 inline void create_motor(int port);
@@ -164,6 +172,7 @@ inline void host_set_motor_voltage(int port, int v);
 inline void host_increment_motor_position(int port, double delta);
 inline double host_get_motor_position(int port);
 inline int host_get_motor_voltage(int port);
+inline bool host_motor_connected(int port);
 inline void host_set_controller_analog(int channel, int value);
 inline int host_get_controller_analog(int channel);
 inline void host_set_controller_digital(int button, bool pressed);
@@ -184,6 +193,10 @@ class Motor {
         void set_brake_mode(int mode) { /* no motor dynamics to brake in the host mock */ }
         std::uint32_t get_faults() const { return 0; }
         int get_port() const { return port; } // matches real pros::Motor/Device::get_port()
+        // Mirrors pros::Device::is_installed() - is anything responding on
+        // this port? Reads the same disconnected-port set host_set_motor_
+        // connected() drives, so the port-check screen is testable.
+        bool is_installed() const { return host_motor_connected(port); }
         MotorGears get_gearing() const { return gearset; }
         std::int32_t set_gearing(MotorGears g) { gearset = g; return 1; }
     private:
@@ -296,6 +309,7 @@ class Rotation {
         }
         std::int32_t reset_position() { centidegrees = 0.0; return 1; }
         std::int32_t set_reversed(bool value) { return 1; } // not modeled in the host mock
+        bool is_installed() const { return connected.load(); } // mirrors pros::Device
         void set_position(double centideg) { centidegrees = centideg; } // host-only test hook
         void set_connected(bool isConnected) { connected = isConnected; } // host-only test hook
     private:
@@ -309,6 +323,15 @@ class Controller {
         int get_analog(int channel) { return host_get_controller_analog(channel); }
         void set_analog(int channel, int value) { host_set_controller_analog(channel, value); }
         bool get_digital(int button) const { auto it = __host_controller_digital.find(button); return it != __host_controller_digital.end() && it->second; }
+        // True only on the loop where the button goes from up to down, like
+        // the real API. Toggles (claw, flip) depend on this: with plain
+        // get_digital they would flip back and forth every 20ms while held.
+        bool get_digital_new_press(int button) {
+            bool down = get_digital(button);
+            bool wasDown = __host_controller_prev_digital[button];
+            __host_controller_prev_digital[button] = down;
+            return down && !wasDown;
+        }
         void set_digital(int button, bool pressed) { __host_controller_digital[button] = pressed; }
         std::int32_t is_connected() { return 1; }
         std::int32_t get_battery_capacity() { return 100; }
@@ -359,6 +382,14 @@ inline void create_motor(int port) { __host_motors.emplace(port, Motor(port)); }
 // (e.g. get_position_all()) set errno = ENODEV in this case; the mock
 // reproduces that so has_fault()'s disconnection check is actually testable.
 inline std::set<int> __host_disconnected_motors;
+// Mirrors pros::Device::is_installed() for motors. Shares the disconnected
+// -port set below, so a test that unplugs a motor also makes it vanish from
+// the brain's port-check screen.
+inline bool host_motor_connected(int port) {
+    std::lock_guard<std::mutex> lock(__host_motors_mutex);
+    return __host_disconnected_motors.count(port) == 0;
+}
+
 inline void host_set_motor_connected(int port, bool connected) {
     std::lock_guard<std::mutex> lock(__host_motors_mutex);
     if (connected) __host_disconnected_motors.erase(port);
@@ -407,6 +438,26 @@ inline void host_set_controller_analog(int channel, int value) { __host_controll
 inline int host_get_controller_analog(int channel) { auto it = __host_controller_analogs.find(channel); return it == __host_controller_analogs.end() ? 0 : it->second; }
 inline void host_set_controller_digital(int button, bool pressed) { __host_controller_digital[button] = pressed; }
 inline bool host_get_controller_digital(int button) { auto it = __host_controller_digital.find(button); return it != __host_controller_digital.end() && it->second; }
+
+// ADI (three-wire) digital output - a pneumatic solenoid, in practice.
+//
+// Deliberately has no is_installed(): real ADI ports are dumb outputs with
+// no device ID, so an unplugged solenoid is indistinguishable from a
+// connected one sitting idle. Adding a fake one here would let the port
+// check claim something it cannot actually know.
+namespace adi {
+class DigitalOut {
+    public:
+        DigitalOut(std::uint8_t port, bool initial_state = false)
+            : port_(port), value_(initial_state) {}
+        std::int32_t set_value(bool value) { value_ = value; return 1; }
+        bool get_value() const { return value_; }   // host-only test hook
+        std::uint8_t get_port() const { return port_; } // host-only test hook
+    private:
+        std::uint8_t port_;
+        bool value_;
+};
+} // namespace adi
 
 } // namespace pros
 
