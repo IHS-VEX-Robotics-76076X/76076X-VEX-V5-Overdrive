@@ -119,18 +119,38 @@ void menu_clear_test_request() {
 	menu_mutex.give();
 }
 
-// The three button callbacks. Each one only moves the state along - no
-// motors, no drawing. Pressing a button must never block, because this task
-// also delivers the other buttons.
-static void apply_button(MenuButton button) {
+// Reads the three buttons and advances the menu on each NEW press.
+//
+// Polled with read_buttons() rather than registered through
+// register_btn0_cb()/btn1/btn2. The callback versions registered without
+// complaint and never fired - the screen drew fine (so LLEMU was linked and
+// set_text worked), but presses did nothing. Polling is a plain synchronous
+// read with no daemon task or callback delivery in the way, so there is far
+// less that can quietly not happen.
+//
+// It also removes a cross-task problem: with callbacks, presses arrived on
+// LLEMU's task while drawing happened on opcontrol's. Polled from the same
+// loop that draws, the whole menu lives in one task.
+//
+// EDGE TRIGGERED: only the transition from up to down counts. Buttons are
+// read every 20ms and a human press lasts far longer than that, so reacting
+// to "is down" would scroll through every routine on a single tap.
+static_assert(MENU_BTN_LEFT == LCD_BTN_LEFT, "menu.hpp button mask is out of step with LLEMU");
+static_assert(MENU_BTN_CENTER == LCD_BTN_CENTER, "menu.hpp button mask is out of step with LLEMU");
+static_assert(MENU_BTN_RIGHT == LCD_BTN_RIGHT, "menu.hpp button mask is out of step with LLEMU");
+
+static void poll_menu_buttons() {
+	static std::uint8_t previous = 0;
+
+	const std::uint8_t now = pros::lcd::read_buttons();
+	const std::uint8_t prev = previous;
+	previous = now;
+	if (now == prev) return; // nothing changed, nothing to do
+
 	menu_mutex.take();
-	menu_state = menu_press(menu_state, button);
+	menu_state = menu_apply_buttons(menu_state, now, prev);
 	menu_mutex.give();
 }
-
-static void on_left_button()   { apply_button(MenuButton::LEFT); }
-static void on_center_button() { apply_button(MenuButton::CENTER); }
-static void on_right_button()  { apply_button(MenuButton::RIGHT); }
 
 // ---------------------------------------------------------------------------
 // DEVICE STATUS
@@ -165,6 +185,17 @@ std::string port_pair_status(const char* label, std::int8_t a, std::int8_t b) {
 // when a page is shorter than the last one is how you end up with two pages
 // mixed together on screen.
 // ---------------------------------------------------------------------------
+
+// Polls the buttons and redraws. Call this once per loop from whichever
+// task is live - opcontrol while driving, competition_initialize before a
+// match. Keeping the poll and the draw together is what guarantees a press
+// is always reflected on screen the same tick it is read.
+void render_menu();
+
+void menu_service() {
+	poll_menu_buttons();
+	render_menu();
+}
 
 void render_menu() {
 	MenuState state = menu_snapshot();
@@ -288,11 +319,8 @@ void initialize() {
 		pros::lcd::set_text(1, "READY - no IMU, drive only");
 	}
 
-	// All three buttons: left picks the match auton, centre opens the test
-	// menu, right shows what's plugged in. See menu.hpp for the full map.
-	pros::lcd::register_btn0_cb(on_left_button);
-	pros::lcd::register_btn1_cb(on_center_button);
-	pros::lcd::register_btn2_cb(on_right_button);
+	// No register_btnX_cb() calls here on purpose - the buttons are polled
+	// in menu_service() instead. See poll_menu_buttons() for why.
 
 	// The lift must hold position against gravity when stopped, so it uses
 	// HOLD - that's what lets you pause it partway up and have it stay there
@@ -348,7 +376,7 @@ void competition_initialize() {
 	// stepping, which meant the buttons did different things depending on
 	// whether a field controller happened to be plugged in.
 	while (true) {
-		render_menu();
+		menu_service();
 		pros::delay(50);
 	}
 }

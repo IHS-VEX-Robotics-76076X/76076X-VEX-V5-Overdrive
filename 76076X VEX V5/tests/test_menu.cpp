@@ -123,6 +123,59 @@ static void test_every_routine_has_a_name() {
     }
 }
 
+
+// The buttons are polled every 20ms, and a real press lasts far longer than
+// that. If a held button counted every tick, one tap would scroll through
+// every routine and land somewhere random - which is exactly the kind of
+// thing that is maddening to debug on a field.
+static void test_held_button_counts_once() {
+    std::cout << "[test] holding a button advances the menu exactly once\n";
+
+    MenuState s;                                   // HOME
+    s = menu_apply_buttons(s, MENU_BTN_LEFT, 0);   // press
+    assert(s.screen == Screen::AUTON_SELECT);
+
+    AutonRoutine afterPress = s.selected;
+
+    // Held down for ten more polls: the mask is identical each time, so
+    // there is no new edge and nothing more should happen.
+    for (int i = 0; i < 10; i++) {
+        s = menu_apply_buttons(s, MENU_BTN_LEFT, MENU_BTN_LEFT);
+    }
+    std::cout << "  after 10 more polls while held: still "
+              << auton_name(s.selected) << "\n";
+    assert(s.selected == afterPress && "a held button must not keep advancing");
+
+    // Release, then press again: that IS a new edge, so it should advance.
+    s = menu_apply_buttons(s, 0, MENU_BTN_LEFT);            // release
+    s = menu_apply_buttons(s, MENU_BTN_LEFT, 0);            // press again
+    assert(s.selected != afterPress && "a fresh press must advance");
+}
+
+// Releasing a button must not be mistaken for pressing it.
+static void test_release_does_nothing() {
+    std::cout << "[test] releasing a button does nothing\n";
+
+    MenuState s;
+    s = menu_apply_buttons(s, 0, MENU_BTN_CENTER); // only a release
+    assert(s.screen == Screen::HOME && "a release must not open a screen");
+    assert(s.runTestNow == false);
+}
+
+// Two buttons landing on the same poll should both be handled rather than
+// one being silently dropped.
+static void test_simultaneous_presses_are_both_applied() {
+    std::cout << "[test] two buttons on one poll are both handled\n";
+
+    // From the test menu, LEFT (next route) and CENTER (run) together.
+    MenuState s = pressAll({MenuButton::CENTER});  // HOME -> TEST_MENU
+    AutonRoutine before = s.selected;
+    s = menu_apply_buttons(s, MENU_BTN_LEFT | MENU_BTN_CENTER, 0);
+
+    assert(s.selected != before && "LEFT should still have advanced");
+    assert(s.runTestNow == true && "CENTER should still have requested a run");
+}
+
 int main() {
     std::cout << "Host test: Menu\n";
 
@@ -133,6 +186,9 @@ int main() {
     test_test_menu_runs_the_selected_routine();
     test_status_screen_exits_on_any_button();
     test_every_routine_has_a_name();
+    test_held_button_counts_once();
+    test_release_does_nothing();
+    test_simultaneous_presses_are_both_applied();
 
     std::cout << "All menu tests passed.\n";
     return 0;

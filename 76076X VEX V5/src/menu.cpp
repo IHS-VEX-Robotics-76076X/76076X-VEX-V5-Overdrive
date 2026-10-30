@@ -59,3 +59,14 @@ MenuState menu_press(MenuState state, MenuButton button) {
     }
     return state;
 }
+
+MenuState menu_apply_buttons(MenuState state, unsigned buttonsNow, unsigned buttonsPrevious) {
+    const unsigned pressed = buttonsNow & ~buttonsPrevious; // fresh presses only
+
+    // Order matters only if several arrive on the same tick, which takes a
+    // deliberate two-finger press. Handling all of them beats dropping some.
+    if (pressed & MENU_BTN_LEFT)   state = menu_press(state, MenuButton::LEFT);
+    if (pressed & MENU_BTN_CENTER) state = menu_press(state, MenuButton::CENTER);
+    if (pressed & MENU_BTN_RIGHT)  state = menu_press(state, MenuButton::RIGHT);
+    return state;
+}

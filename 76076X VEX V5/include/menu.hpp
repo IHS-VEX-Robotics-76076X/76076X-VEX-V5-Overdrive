@@ -69,6 +69,24 @@ struct MenuState {
     bool runTestNow = false;
 };
 
+// Button bitmasks, matching LLEMU's LCD_BTN_* values. Repeated here so this
+// header stays free of PROS includes and can be tested on a laptop; main.cpp
+// static_asserts them against the real constants so they cannot drift.
+constexpr unsigned MENU_BTN_RIGHT  = 1 << 0;
+constexpr unsigned MENU_BTN_CENTER = 1 << 1;
+constexpr unsigned MENU_BTN_LEFT   = 1 << 2;
+
+// Applies whichever buttons were NEWLY pressed between the two readings, and
+// returns the resulting state.
+//
+// Edge triggered: only an up-to-down transition counts. The buttons are read
+// every 20ms and a human press lasts far longer, so acting on "is currently
+// down" would scroll through every routine on a single tap.
+//
+// Takes both readings rather than keeping its own history, so it stays pure
+// and the caller owns the "what did it look like last tick" bookkeeping.
+MenuState menu_apply_buttons(MenuState state, unsigned buttonsNow, unsigned buttonsPrevious);
+
 // Applies one button press and returns the new state.
 //
 // Pure on purpose: no motors, no screen, no globals. The caller owns the

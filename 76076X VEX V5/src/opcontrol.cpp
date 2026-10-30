@@ -20,7 +20,8 @@ extern pros::adi::DigitalOut claw_piston;
 extern pros::adi::DigitalOut flip_piston;
 
 // Menu plumbing, defined in main.cpp.
-void render_menu();                  // draws whichever screen is showing
+void menu_service();                 // reads the buttons, then redraws
+void render_menu();                  // redraw only (used mid-routine)
 MenuState menu_snapshot();           // consistent read of the menu state
 void menu_clear_test_request();      // call once a requested route has run
 void run_auton_routine(AutonRoutine routine);
@@ -127,7 +128,7 @@ void opcontrol() {
         // mechanism commands, so a test routine starts from a stopped robot
         // rather than inheriting this loop's stick values.
         service_test_request(menu_snapshot());
-        render_menu();
+        menu_service();
 
         // claw: A toggles open/closed. new_press (not get_digital) so holding
         // the button doesn't flip it back and forth every 20ms loop.
