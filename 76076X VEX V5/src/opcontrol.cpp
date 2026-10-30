@@ -7,6 +7,7 @@
 #include "chassis.hpp"
 #include "config.hpp"
 #include "util.hpp"
+#include "menu.hpp"
 
 #include <cstdio>
 #include <atomic>
@@ -17,43 +18,36 @@ extern pros::MotorGroup cascade_motors;
 extern pros::Motor intake_motor;
 extern pros::adi::DigitalOut claw_piston;
 extern pros::adi::DigitalOut flip_piston;
-extern std::atomic<bool> show_status; // toggled by the LCD center button (see main.cpp)
 
-// Shows robot battery %, controller connection, and any drivetrain/mechanism
-// motor faults on LCD line 2, when show_status is toggled on.
-static void update_status_display(pros::Controller &master) {
-    if (!show_status) return;
+// Menu plumbing, defined in main.cpp.
+void menu_service();                 // reads the buttons, then redraws
+void render_menu();                  // redraw only (used mid-routine)
+MenuState menu_snapshot();           // consistent read of the menu state
+void menu_clear_test_request();      // call once a requested route has run
+void run_auton_routine(AutonRoutine routine);
 
-    // A non-zero fault value means a motor is overheating, drawing too much
-    // current, or reporting a driver fault. Pistons aren't motors and don't
-    // report faults, so they're not part of this check.
-    bool fault = myRobot.has_fault()
-        || intake_motor.get_faults() != 0;
+// The old centre-button "show_status" toggle is gone. The menu replaced it:
+// HOME shows the battery, and the port check (RIGHT) lists what is actually
+// plugged in - which is what that toggle was really being used to find out.
 
-    for (auto flags : cascade_motors.get_faults_all()) {
-        if (flags != 0) { fault = true; break; }
-    }
-
-    char buf[40];
-    std::snprintf(buf, sizeof(buf), "Bat:%d%% Ctrl:%s%s",
-                  static_cast<int>(pros::battery::get_capacity()),
-                  master.is_connected() ? "OK" : "LOST",
-                  fault ? " FAULT!" : "");
-    pros::lcd::set_text(2, buf);
-}
-
-// Adding a DriveMode without giving it a branch below would silently fall
-// into the else and drive as TANK - which is exactly the bug that shipped
-// when SPLIT_ARCADE was added. This turns that into a build error.
+// Runs a routine the driver asked for from the test menu.
 //
-// It lives out here rather than inside the if/else: a static_assert whose
-// condition doesn't depend on a template parameter is evaluated even in a
-// discarded `if constexpr` branch, so putting it in the else fires it on
-// every build regardless of the configured mode.
-static_assert(DEFAULT_DRIVE_MODE == DriveMode::SPLIT_ARCADE ||
-              DEFAULT_DRIVE_MODE == DriveMode::ARCADE ||
-              DEFAULT_DRIVE_MODE == DriveMode::TANK,
-              "Unhandled DriveMode - add a branch for it in opcontrol()");
+// This happens HERE, in opcontrol's task, rather than in the button callback
+// that requested it. opcontrol owns the motors - if the callback task drove
+// them itself, two tasks would be commanding the same motors every 20ms and
+// the robot would judder between them.
+//
+// The routine blocks, so the sticks are dead until it finishes. That is why
+// the screen says "RUNNING - sticks off" while it does.
+static void service_test_request(const MenuState &state) {
+    if (!state.runTestNow) return;
+
+    myRobot.stop();                  // don't inherit this loop's stick input
+    render_menu();                   // show "RUNNING" before we block
+    run_auton_routine(state.selected);
+    myRobot.stop();                  // and don't leave it coasting
+    menu_clear_test_request();
+}
 
 void opcontrol() {
     pros::Controller master(pros::E_CONTROLLER_MASTER);
@@ -130,7 +124,11 @@ void opcontrol() {
         else if (master.get_digital(E_CONTROLLER_DIGITAL_B)) intakeSpeed = -127;
         intake_motor.move(intakeSpeed);
 
-        update_status_display(master);
+        // Draw the menu and run anything it asked for. After the drive and
+        // mechanism commands, so a test routine starts from a stopped robot
+        // rather than inheriting this loop's stick values.
+        service_test_request(menu_snapshot());
+        menu_service();
 
         // claw: A toggles open/closed. new_press (not get_digital) so holding
         // the button doesn't flip it back and forth every 20ms loop.

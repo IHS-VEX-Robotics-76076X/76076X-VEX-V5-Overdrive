@@ -377,13 +377,37 @@ Ports 11 (IMU) and 12 (tracking wheel) are reserved in `config.hpp` but
 neither sensor is fitted yet - `HAS_INERTIAL_SENSOR` and
 `HAS_TRACKING_WHEEL` are both `false`.
 
-## On the LCD
+## On the brain screen
 
-- **Left/right buttons** (during `competition_initialize`, i.e. before a
-  match starts): pick the autonomous routine (red close side / blue far
-  side). Shown on line 3.
-- **Center button**: toggles a live status readout on line 2 - robot battery
-  %, controller connection, and any motor faults.
+Three buttons under the screen drive a small menu.
+
+| Screen | LEFT | CENTRE | RIGHT |
+|---|---|---|---|
+| **Home** | Pick match auton | Test auton | Port check |
+| **Pick match auton** | Next route | Confirm, back to driving | Cancel |
+| **Test auton** | Next route | **Run it now** | Back to driving |
+| **Port check** | Back | Back | Back |
+
+**Home** shows the chosen match route, whether auton is enabled, and the battery.
+
+**Pick match auton** sets what `autonomous()` runs in a real match. Confirming
+returns to home; driver control was never interrupted, so you carry straight on
+driving.
+
+**Test auton** runs a route there and then, without field control. The sticks
+are dead while it runs and the screen says so. It stays on this page afterwards
+so you can adjust and run again.
+
+**Port check** lists every Smart Port and whether something is answering on it
+right now. Unplug a motor and its entry flips to `--` within a loop.
+
+One honest gap: **pneumatics can't be detected.** ADI three-wire ports are dumb
+outputs with no device ID, so an unplugged solenoid is indistinguishable from a
+connected one sitting idle. The screen says so rather than showing a reading it
+can't actually take.
+
+The menu's button logic lives in `include/menu.hpp` / `src/menu.cpp`, separate
+from the drawing, so it's covered by `tests/test_menu.cpp` and runs on a laptop.
 
 ## Known limitations
 
